@@ -1,6 +1,7 @@
 # CCLark
 
 [![CI](https://github.com/Agony5757/cclark/actions/workflows/ci.yml/badge.svg)](https://github.com/Agony5757/cclark/actions)
+[![Docs](https://img.shields.io/badge/docs-github.io-blue)](https://agony5757.github.io/cclark/)
 
 **在飞书群聊和话题中控制 AI 编程助手。**
 
@@ -79,7 +80,7 @@ LOG_LEVEL=INFO
 RICH_OUTPUT=true
 ```
 
-所有配置项详见[配置参考](https://cclark.readthedocs.io/modules/config.html)。
+所有配置项详见[配置参考](https://agony5757.github.io/cclark/modules/config.html)。
 
 ## 使用方法
 
@@ -206,17 +207,19 @@ CCLark 分四层：
 - **每轮一个卡片** —— `VerboseCardStreamer` 每个通道每轮智能体只维护一个流式卡片，通过 `PATCH /im/v1/messages` 就地更新
 - **最长前缀分发** —— 卡片按钮值使用 `前缀:值` 命名；`CallbackRegistry` 按最长匹配前缀路由
 
-完整数据流图见[架构文档](https://cclark.readthedocs.io/architecture.html)。
+完整数据流图见[架构文档](https://agony5757.github.io/cclark/architecture.html)。
 
 ## 文档
 
+在线文档：https://agony5757.github.io/cclark/
+
 | 章节 | 说明 |
 |------|------|
-| [快速上手](https://cclark.readthedocs.io/getting-started/index.html) | 安装与首次运行 |
-| [配置指南](https://cclark.readthedocs.io/getting-started/configuration.html) | 所有环境变量说明 |
-| [架构设计](https://cclark.readthedocs.io/architecture.html) | 系统设计与数据流 |
-| [模块参考](https://cclark.readthedocs.io/modules/index.html) | 各模块调用栈与 API |
-| [故障排查](https://cclark.readthedocs.io/troubleshooting.html) | 常见问题与修复方法 |
+| [快速上手](https://agony5757.github.io/cclark/getting-started/index.html) | 安装与首次运行 |
+| [配置指南](https://agony5757.github.io/cclark/getting-started/configuration.html) | 所有环境变量说明 |
+| [架构设计](https://agony5757.github.io/cclark/architecture.html) | 系统设计与数据流 |
+| [模块参考](https://agony5757.github.io/cclark/modules/index.html) | 各模块调用栈与 API |
+| [故障排查](https://agony5757.github.io/cclark/troubleshooting.html) | 常见问题与修复方法 |
 
 ## 与 unified-icc 的关系
 
