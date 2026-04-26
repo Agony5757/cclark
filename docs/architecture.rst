@@ -1,69 +1,66 @@
-Architecture
+架构设计
 ============
 
-cclark is a thin bridge between Feishu and unified-icc. It has four independent
-layers, each with a clear input/output contract.
+cclark 是飞书与 unified-icc 之间的轻量桥接层。它有四个独立层级，
+每个层级都有清晰的输入/输出契约。
 
-System layers
+系统层级
 
-Layer 1 — Feishu REST API
+第 1 层 — 飞书 REST API
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**In**: Feishu outbound webhook POST requests (JSON)
+**输入**：飞书出站 Webhook POST 请求（JSON）
 
-**Out**: ``FeishuClient`` HTTP calls → Feishu API
+**输出**：``FeishuClient`` HTTP 调用 → 飞书 API
 
-``feishu_client.py`` wraps every outbound Feishu API call. It handles
-tenant_access_token auto-refresh, JSON encoding, and error normalisation.
-It knows nothing about unified-icc or the event system.
+``feishu_client.py`` 封装了所有出站飞书 API 调用。它处理
+tenant_access_token 自动刷新、JSON 编码和错误规范化。
+它不了解 unified-icc 或事件系统。
 
-Layer 2 — FastAPI Webhook Server
+第 2 层 — FastAPI Webhook 服务器
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**In**: ``POST /webhook/event`` and ``POST /webhook/callback``
+**输入**：``POST /webhook/event`` 和 ``POST /webhook/callback``
 
-**Out**: Typed event objects (``FeishuMessageEvent``, ``FeishuCallbackEvent``)
+**输出**：类型化事件对象（``FeishuMessageEvent``、``FeishuCallbackEvent``）
 
-``webhook.py`` runs a FastAPI app. It:
+``webhook.py`` 运行一个 FastAPI 应用。它：
 
-- Handles URL verification challenges
-- Parses raw JSON into typed events (``event_parsers.py``)
-- Silently acknowledges non-text messages
-- Checks user allowlist
-- Skips the bot's own messages
+- 处理 URL 验证挑战
+- 将原始 JSON 解析为类型化事件（``event_parsers.py``）
+- 对非文本消息静默确认
+- 检查用户白名单
+- 跳过机器人自身消息
 
-Layer 3 — Event Handlers
+第 3 层 — 事件处理器
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**In**: ``FeishuMessageEvent`` / ``CallbackContext``
+**输入**：``FeishuMessageEvent`` / ``CallbackContext``
 
-**Out**: Calls to unified-icc gateway + FeishuAdapter
+**输出**：调用 unified-icc 网关 + FeishuAdapter
 
-Handlers live in ``handlers/``:
+处理器位于 ``handlers/``：
 
-Handlers live in ``handlers/``:
+* ``message.py`` — 路由入站文本；命令分发或网关转发
+* ``callback.py`` — 最长前缀分发到子处理器
+* ``session_creation.py`` — 目录浏览器、提供方选择器、窗口创建
+* ``toolbar.py`` — 工具栏卡片渲染和按钮点击处理
+* ``screenshot.py`` — 窗格截图 → 飞书图片上传
 
-* ``message.py`` — Routes inbound text; command dispatch or gateway forward
-* ``callback.py`` — Longest-prefix dispatch to sub-handlers
-* ``session_creation.py`` — Directory browser, provider picker, window creation
-* ``toolbar.py`` — Toolbar card rendering and button click handling
-* ``screenshot.py`` — Pane capture → Feishu image upload
-
-Layer 4 — Gateway Callbacks
+第 4 层 — 网关回调
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**In**: ``gateway.on_message()``, ``gateway.on_status()``, ``gateway.on_hook_event()``
+**输入**：``gateway.on_message()``、``gateway.on_status()``、``gateway.on_hook_event()``
 
-**Out**: ``FeishuAdapter`` calls → Feishu messages/cards/images
+**输出**：``FeishuAdapter`` 调用 → 飞书消息/卡片/图片
 
-The gateway polls tmux for transcript changes and emits events. cclark
-registers three async callbacks that forward the event to the appropriate
-Feishu channel via ``FeishuAdapter``.
+网关轮询 tmux 的转录本变化并发出事件。cclark
+注册三个异步回调，将事件通过 ``FeishuAdapter`` 转发到对应的飞书频道。
 
-Key data flows
+关键数据流
 --------------
 
-Inbound text (user → agent)
+入站文本（用户 → 智能体）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
@@ -75,80 +72,79 @@ Inbound text (user → agent)
    → gateway.send_to_window(window_id, text)
    → tmux_manager.send_keys()
 
-New session (first message, unbound channel)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+新会话（首条消息，未绑定频道）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    handle_message() [window_id is None]
    → session_creation.start_session_creation()
-   → FeishuAdapter.send_interactive_card() [directory browser]
-   → user clicks folder buttons
-   → callback → handle_dir_callback() [navigate]
-   → user clicks Confirm
-   → callback → handle_provider_callback() [provider picker]
-   → user clicks provider
-   → callback → handle_mode_callback() [mode picker]
+   → FeishuAdapter.send_interactive_card() [目录浏览器]
+   → 用户点击文件夹按钮
+   → callback → handle_dir_callback() [导航]
+   → 用户点击确认
+   → callback → handle_provider_callback() [提供方选择器]
+   → 用户点击提供方
+   → callback → handle_mode_callback() [模式选择器]
    → _create_window()
    → gateway.create_window(path, provider, approval_mode)
    → gateway.bind_channel(channel_id, window_id)
    → gateway.send_to_window(window_id, pending_text)
 
-Agent output (agent → user)
+智能体输出（智能体 → 用户）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
-   SessionMonitor detects new transcript lines
-   → gateway emits AgentMessageEvent
-   → main.py:on_message() callback
+   SessionMonitor 检测到新转录行
+   → 网关发出 AgentMessageEvent
+   → main.py:on_message() 回调
    → FeishuAdapter.send_text(channel_id, text)
 
-Toolbar button click
+工具栏按钮点击
 ~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    POST /webhook/callback
    → webhook.py:_handle_callback()
-   → callback_registry.dispatch(ctx)  [longest-prefix match]
+   → callback_registry.dispatch(ctx)  [最长前缀匹配]
    → handlers/toolbar.py:handle_toolbar_callback()
-   → gateway.send_key(window_id, payload)  [key type]
-   → gateway.send_to_window(window_id, payload)  [text type]
-   → _handle_builtin()  [screenshot, live, dismiss, etc.]
+   → gateway.send_key(window_id, payload)  [key 类型]
+   → gateway.send_to_window(window_id, payload)  [text 类型]
+   → _handle_builtin()  [截图、live、dismiss 等]
 
-State management
+状态管理
 -----------------
 
-Per-channel streaming state is kept in ``state.py`` as module-level globals:
+每个频道的流式状态保存在 ``state.py`` 的模块级全局变量中：
 
 .. code-block:: python
 
    _verbose_states[channel_id]   # VerboseChannelState
    _toolbar_states[channel_id]   # ToolbarState
 
-Per-user browse state during session creation is kept in
-``session_creation.py`` as a module-level dict:
+会话创建期间每个用户的浏览状态保存在
+``session_creation.py`` 的模块级字典中：
 
 .. code-block:: python
 
    _browse_state[user_id] = {"path": "...", "page": 0, "provider": "claude"}
 
-All state is in-memory only. State is not persisted across restarts (this
-behaviour matches ccgram's approach).
+所有状态仅存于内存。重启后状态不持久化（此行为与 ccgram 一致）。
 
-Startup sequence
+启动顺序
 ----------------
 
 .. code-block:: text
 
-   main.main() [CLI entry]
-   → _main() async
+   main.main() [CLI 入口]
+   → _main() 异步
    → FeishuClient(app_id, app_secret)
    → UnifiedICC().start()
-   → _register_callbacks()  [gateway event → Feishu]
+   → _register_callbacks()  [网关事件 → 飞书]
    → set_handlers(gateway, adapter)
    → register_message_handler / register_callback_handler
-   → import handlers.*  [triggers @register decorators]
-   → create_app(client)  [FastAPI app]
-   → uvicorn.Server.serve()  [webhook listening]
+   → import handlers.*  [触发 @register 装饰器]
+   → create_app(client)  [FastAPI 应用]
+   → uvicorn.Server.serve()  [webhook 监听]

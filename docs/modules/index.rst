@@ -1,8 +1,7 @@
-Module Reference
+模块参考
 ================
 
-Detailed documentation for each module, including call stacks showing how
-functions chain together to accomplish each feature.
+各模块的详细文档，包含函数链如何组合实现各功能的调用栈。
 
 .. toctree::
    :maxdepth: 1

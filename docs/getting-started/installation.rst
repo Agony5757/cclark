@@ -1,13 +1,14 @@
-Installation
+安装
+=========
 
-Requirements
+环境要求
 ------------
 
 - Python 3.12+
-- tmux (must be installed and running)
-- A Feishu custom app with bot capability enabled
+- tmux（必须已安装并运行）
+- 已启用机器人功能的飞书自建应用
 
-Install from source
+从源码安装
 
 .. code-block:: bash
 
@@ -15,27 +16,27 @@ Install from source
    cd cclark
    uv sync
 
-The ``unified-icc`` dependency is pulled directly from its source tree
-(``file:///home/agony/projects/unified-icc``) so the two projects can be
-developed in tandem without releasing new versions.
+``unified-icc`` 依赖直接从其源码树拉取
+（``file:///home/agony/projects/unified-icc``），以便两个项目
+可以并行开发而无需发布新版本。
 
-Install cclark as a CLI
+将 cclark 安装为 CLI
 -----------------------
 
 .. code-block:: bash
 
    uv pip install -e .
-   # Now available as:
+   # 现在可以这样使用：
    cclark run
 
-Install dev dependencies
+安装开发依赖
 
 .. code-block:: bash
 
    uv sync --extra dev
-   # Provides: ruff, pytest, pytest-asyncio, pytest-cov
+   # 提供：ruff、pytest、pytest-asyncio、pytest-cov
 
-Verify the installation
+验证安装
 -----------------------
 
 .. code-block:: bash
@@ -43,77 +44,76 @@ Verify the installation
    FEISHU_APP_ID=x FEISHU_APP_SECRET=x ALLOWED_USERS=x FEISHU_BOT_USER_ID=x \
      uv run python -c "from cclark import FeishuClient; print('OK')"
 
-Set up Feishu bot
+配置飞书机器人
 -----------------
 
-1. Go to `Feishu Open Platform <https://open.feishu.cn/>`_ and create a custom app.
-2. Enable **Bot** capability.
-3. Under **Permissions**, add:
+1. 前往 `飞书开放平台 <https://open.feishu.cn/>`_ 创建自建应用。
+2. 启用**机器人**能力。
+3. 在**权限管理**中添加：
 
-   - ``im:message:send_as_bot`` — send messages
-   - ``im:message:receive_v1`` — receive events
-   - ``im:message`` — read messages
+   - ``im:message:send_as_bot`` — 发送消息
+   - ``im:message:receive_v1`` — 接收事件
+   - ``im:message`` — 读取消息
 
-4. Create a **Message Event** subscription for ``im.message.receive_v1``.
-5. Set the webhook URL to your running server, e.g. ``https://your-host/webhook/event``.
-6. Note your **App ID** (``cli_xxxx``) and **App Secret**.
+4. 创建**消息事件**订阅，订阅 ``im.message.receive_v1``。
+5. 将 Webhook URL 设置为你的服务器，例如 ``https://your-host/webhook/event``。
+6. 记录你的**应用 ID**（``cli_xxxx``）和**应用密钥**。
 
-For local development, use `ngrok <https://ngrok.com/>`_ to expose your
-local webhook port:
+本地开发可使用 `ngrok <https://ngrok.com/>`_ 将本地 Webhook 端口暴露到公网：
 
 .. code-block:: bash
 
    ngrok http 8080
-   # Copy the https:// URL and set it in Feishu Open Platform
+   # 复制 https:// URL 并填入飞书开放平台
 
-Environment variables
+环境变量
 
-Required
+必需
 ~~~~~~~~
 
 .. list-table::
    :header-rows: 1
    :widths: 30 70
 
-   * - Variable
-     - Description
+   * - 变量
+     - 说明
    * - ``FEISHU_APP_ID``
-     - Feishu app ID (e.g. ``cli_xxxx``)
+     - 飞书应用 ID（例如 ``cli_xxxx``）
    * - ``FEISHU_APP_SECRET``
-     - Feishu app secret
+     - 飞书应用密钥
    * - ``ALLOWED_USERS``
-     - Comma-separated Feishu open_ids or user_ids who may use the bot
+     - 有权使用机器人的飞书 open_id 或 user_id 列表（逗号分隔）
 
-Optional
+可选
 ~~~~~~~~
 
 .. list-table::
    :header-rows: 1
    :widths: 30 70
 
-   * - Variable
-     - Description
+   * - 变量
+     - 说明
    * - ``FEISHU_BOT_USER_ID``
-     - Bot's own open_id (to skip own messages)
+     - 机器人自身的 open_id（用于跳过自身消息）
    * - ``FEISHU_VERIFICATION_TOKEN``
-     - Webhook verification token from Feishu
+     - 飞书提供的 Webhook 验证令牌
    * - ``FEISHU_ENCRYPT_KEY``
-     - AES encryption key for event payloads
+     - 用于事件负载加密的 AES 密钥
    * - ``CCLARK_WEBHOOK_PORT``
-     - Webhook server port (default: 8080)
+     - Webhook 服务器端口（默认：8080）
    * - ``CCLARK_WEBHOOK_PATH``
-     - Webhook URL path (default: ``/webhook/event``)
+     - Webhook URL 路径（默认：``/webhook/event``）
    * - ``CCLARK_PROVIDER``
-     - Default provider (default: ``claude``)
+     - 默认智能体提供方（默认：``claude``）
    * - ``CCLARK_TOOLBAR_CONFIG``
-     - Path to toolbar TOML config file
+     - 工具栏 TOML 配置文件路径
 
-``.env`` file
+``.env`` 文件
 -------------
 
-cclark loads environment variables from ``.env`` files:
+cclark 从以下 ``.env`` 文件加载环境变量：
 
-1. ``./.env`` (repo root)
+1. ``./.env``（仓库根目录）
 2. ``~/.cclark/.env``
 
 .. code-block:: text

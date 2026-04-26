@@ -1,16 +1,15 @@
-Troubleshooting
-===============
+故障排查
+============
 
-Startup failures
+启动失败
 ----------------
 
 "FEISHU_APP_ID environment variable is required"
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The config singleton raises ``ValueError`` at import time if required env
-vars are missing.
+配置单例在导入时如果缺少必需的环境变量会抛出 ``ValueError``。
 
-**Fix**: Set all required env vars before starting:
+**修复**：启动前设置所有必需的环境变量：
 
 .. code-block:: bash
 
@@ -23,161 +22,156 @@ vars are missing.
 "Cannot find unified-icc"
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The dependency path in ``pyproject.toml`` points to the local source tree.
-Run ``uv sync`` in the ``cclark/`` directory first.
+``pyproject.toml`` 中的依赖路径指向本地源码树。
+请先在 ``cclark/`` 目录下运行 ``uv sync``。
 
-"Address already in use" when starting the webhook
+"Address already in use" 启动 Webhook 时
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Port 8080 (or ``$CCLARK_WEBHOOK_PORT``) is already in use.
+端口 8080（或 ``$CCLARK_WEBHOOK_PORT``）已被占用。
 
-**Fix**: Set a different port:
+**修复**：设置不同端口：
 
 .. code-block:: bash
 
    export CCLARK_WEBHOOK_PORT=8081
    cclark run
 
-Feishu webhook
+飞书 Webhook
 ---------------
 
-Feishu is not receiving events
+飞书未收到事件
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. **Check the webhook URL** is publicly accessible (not localhost)
-2. **Use ngrok** for local development:
+1. **检查 Webhook URL** 是否可公开访问（非 localhost）
+2. **本地开发使用 ngrok**：
 
    .. code-block:: bash
 
       ngrok http 8080
-      # Copy https:// URL → Feishu Open Platform → Event Subscription
+      # 复制 https:// URL → 飞书开放平台 → 事件订阅
 
-3. Verify the URL verification challenge passes:
+3. 验证 URL 验证挑战是否通过：
 
    .. code-block:: bash
 
       curl -X POST https://your-host/webhook/event \
         -H "Content-Type: application/json" \
         -d '{"challenge": "test-challenge"}'
-      # Should return: {"challenge": "test-challenge"}
+      # 应返回：{"challenge": "test-challenge"}
 
-4. Check ``/health`` is reachable from the internet:
+4. 检查 ``/health`` 是否可从公网访问：
 
    .. code-block:: bash
 
       curl https://your-host/health
-      # Should return: {"status": "ok"}
+      # 应返回：{"status": "ok"}
 
-Messages not being processed
+消息未被处理
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-- **Bot's own messages**: ``config.bot_user_id`` is set? The bot skips its own messages.
-- **Non-text messages**: Only ``msg_type=text`` is handled. Images, files, etc. are acknowledged but not processed.
-- **User not in allowlist**: ``config.is_user_allowed(user_id)`` returns False → silent skip.
+- **机器人自身消息**：是否设置了 ``config.bot_user_id``？机器人会跳过自身消息。
+- **非文本消息**：目前仅处理 ``msg_type=text``。图片、文件等会被确认但不会处理。
+- **用户不在白名单**：``config.is_user_allowed(user_id)`` 返回 False → 静默跳过。
 
-Directory browser / session creation
+目录浏览器 / 会话创建
 --------------------------------------
 
-"Directory no longer exists" when clicking a folder
+点击文件夹时提示"Directory no longer exists"
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The path in the URL-encoded action value is stale (session restart or directory
-deleted). Click **Home** to reset to a valid directory.
+URL 编码的操作值中的路径已过期（会话重启或目录已删除）。
+点击 **Home** 重置到有效目录。
 
-Session creation hangs after confirming directory
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+确认目录后会话创建挂起
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The session creation flow requires:
+会话创建流程依赖：
 
-1. ``gateway.create_window()`` → tmux new-window must succeed
-2. ``gateway.bind_channel()`` → channel-window mapping saved
-3. ``gateway.send_to_window()`` → text piped to tmux pane
+1. ``gateway.create_window()`` → tmux new-window 必须成功
+2. ``gateway.bind_channel()`` → 频道-窗口映射已保存
+3. ``gateway.send_to_window()`` → 文本已管道输入 tmux 窗格
 
-Check that:
+请检查：
 
-- tmux is running (``tmux list-sessions``)
-- the working directory exists and is accessible
-- the provider command (``claude``, ``codex``, etc.) is installed and on PATH
+- tmux 是否运行中（``tmux list-sessions``）
+- 工作目录是否存在且可访问
+- 提供方命令（``claude``、``codex`` 等）是否已安装且在 PATH 中
 
-Toolbar buttons do nothing
+工具栏按钮无响应
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-- ``tb:`` callbacks require a bound window (``channel_router.resolve_window`` must return a window_id)
-- Check the gateway is running (``gateway.on_message`` is registered)
-- ``gateway.send_key()`` requires tmux 1.8+
+- ``tb:`` 回调需要有已绑定的窗口（``channel_router.resolve_window`` 必须返回 window_id）
+- 检查网关是否在运行（``gateway.on_message`` 是否已注册）
+- ``gateway.send_key()`` 需要 tmux 1.8+
 
-Streaming card not updating
+流式卡片不更新
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The VerboseCardStreamer requires a registered ``on_message`` callback.
-If ``main._register_callbacks`` fails silently, streaming never starts.
+VerboseCardStreamer 需要已注册的 ``on_message`` 回调。
+如果 ``main._register_callbacks`` 静默失败，流式功能不会启动。
 
-Check: does ``/health`` respond? Is the gateway poll loop running?
-Verify with a ``/new`` command — a streaming card should appear within 3s
-of the first agent output.
+检查：``/health`` 是否有响应？网关轮询循环是否在运行？
+可用 ``/new`` 命令验证——首条智能体输出后 3 秒内应出现流式卡片。
 
-VerboseCardStreamer creates duplicate cards
+VerboseCardStreamer 创建重复卡片
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-If multiple streaming cards appear for the same turn, the ``_state`` registry
-may have been cleared between flushes. Ensure ``reset()`` is only called
-on unbind or session end, not between turns of the same session.
+如果同一回合出现多个流式卡片，可能是 ``_state`` 注册表在两次刷新之间被清除了。
+确保 ``reset()`` 仅在取消绑定或会话结束时调用，不在同一会话的回合之间调用。
 
-Card too large (Feishu error)
+卡片过大（飞书错误）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Feishu enforces a ~30 KB limit per card. Reduce ``_MAX_CHARS_PER_FLUSH``
-in ``cards/streaming.py`` or truncate long outputs in the agent transcript
-before pushing to the streamer.
+飞书强制每张卡片最大约 30 KB。请减少 ``cards/streaming.py`` 中的 ``_MAX_CHARS_PER_FLUSH``
+或在对智能体转录本推送到流式器前截断长输出。
 
-Callback registration conflicts
+回调注册冲突
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-If you see ``ValueError: Callback prefix 'prov:' already registered``, two
-modules registered the same prefix. The fix: only register catch-all prefixes
-(``DB``, ``PROV``, ``MODE``, ``TB``) in ``handlers/callback.py`` — individual
-sub-handlers register their own specific prefixes (``db:sel:``, ``prov:claude``,
-etc.) directly.
+如果看到 ``ValueError: Callback prefix 'prov:' already registered``，
+说明两个模块注册了相同前缀。修复方法：仅在 ``handlers/callback.py`` 中注册通配前缀
+（``DB``、``PROV``、``MODE``、``TB``）—— 具体前缀
+（``db:sel:``、``prov:claude`` 等）由各子处理器直接注册。
 
-tmux connection
----------------
+tmux 连接
+-------------
 
 "Session 'default' not found"
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The unified-icc gateway requires tmux to be installed and the default session
-to exist (or be auto-created). Start tmux first:
+unified-icc 网关要求 tmux 已安装且默认会话存在（或自动创建）。先启动 tmux：
 
 .. code-block:: bash
 
    tmux new -d -s default
-   # or set CCLARK_TMUX_SESSION to a different session name
+   # 或设置 CCLARK_TMUX_SESSION 为其他会话名
 
-Provider-specific
+智能体相关
 -----------------
 
 "claude command not found"
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Install Claude Code CLI:
+安装 Claude Code CLI：
 
 .. code-block:: bash
 
    npm install -g @anthropic-ai/claude-code
-   # or: pip install claude-code
+   # 或：pip install claude-code
 
 "codex command not found"
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Install OpenAI Codex CLI:
+安装 OpenAI Codex CLI：
 
 .. code-block:: bash
 
    npm install -g @openai/codex
-   # or: pip install codex
+   # 或：pip install codex
 
-File upload fails
+文件上传失败
 ~~~~~~~~~~~~~~~~~
 
-Feishu file uploads require the ``im:file`` scope in the app permissions.
-Check Feishu Open Platform → Permissions → ``im:file``.
+飞书文件上传需要在应用权限中申请 ``im:file`` 作用域。
+检查：飞书开放平台 → 权限管理 → ``im:file``。

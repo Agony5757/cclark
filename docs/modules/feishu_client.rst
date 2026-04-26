@@ -1,11 +1,10 @@
-feishu_client — Feishu REST API Client
-=======================================
+feishu_client — 飞书 REST API 客户端
+=========================================
 
-Source: src/cclark/feishu_client.py
+源码：src/cclark/feishu_client.py
 
-Thin async wrapper around Feishu's IM API using ``httpx.AsyncClient``.
-All outbound Feishu communication flows through this module — no other module
-makes raw HTTP calls.
+使用 ``httpx.AsyncClient`` 对飞书 IM API 的轻量异步封装。
+所有出站飞书通信都经过此模块——其他模块不发送原始 HTTP 请求。
 
 ``FeishuClient``
 ----------------
@@ -15,54 +14,54 @@ makes raw HTTP calls.
    from cclark.feishu_client import FeishuClient, FeishuAPIError
 
    client = FeishuClient(app_id="cli_xxx", app_secret="xxx")
-   # use await client.send_text(chat_id, "hello")
+   # 使用 await client.send_text(chat_id, "hello")
    await client.close()
 
-Token management
+令牌管理
 ----------------
 
-``_get_token()`` is called lazily before every outbound request. It:
+``_get_token()`` 在每次出站请求前惰性调用。它：
 
-1. Checks if the cached token is still valid (expires_at - 60s margin)
-2. If expired/missing, POSTs to ``/auth/v3/tenant_access_token``
-3. Stores token + expiry in instance attributes
-4. Returns the token
+1. 检查缓存令牌是否仍有效（expires_at 预留 60 秒余量）
+2. 如已过期/缺失，向 ``/auth/v3/tenant_access_token`` 发送 POST
+3. 将令牌 + 过期时间存入实例属性
+4. 返回令牌
 
-Token is **never** shared across ``FeishuClient`` instances. Each instance
-manages its own token lifecycle.
+令牌**不会**在多个 ``FeishuClient`` 实例间共享。每个实例
+管理自己的令牌生命周期。
 
-API methods
+API 方法
 -----------
 
 .. list-table::
    :header-rows: 1
    :widths: 40 60
 
-   * - Method
-     - Feishu API endpoint
+   * - 方法
+     - 飞书 API 端点
    * - ``send_message(receive_id, msg_type, content)``
-     - ``POST /im/v1/messages`` (returns message_id)
+     - ``POST /im/v1/messages``（返回 message_id）
    * - ``send_text(receive_id, text)``
-     - Wraps ``send_message`` with ``msg_type="text"``
+     - 用 ``msg_type="text"`` 封装 ``send_message``
    * - ``send_interactive_card(receive_id, card_json)``
-     - Wraps ``send_message`` with ``msg_type="interactive"``
+     - 用 ``msg_type="interactive"`` 封装 ``send_message``
    * - ``send_image(receive_id, image_key)``
-     - Wraps ``send_message`` with ``msg_type="image"``
+     - 用 ``msg_type="image"`` 封装 ``send_message``
    * - ``send_file(receive_id, file_key, file_name)``
-     - Wraps ``send_message`` with ``msg_type="file"``
+     - 用 ``msg_type="file"`` 封装 ``send_message``
    * - ``patch_message(message_id, card_json)``
      - ``PATCH /im/v1/messages/{message_id}``
    * - ``reply_in_thread(receive_id, msg_type, content, parent_id)``
-     - ``POST /im/v1/messages`` with ``parent_id`` for threading
+     - ``POST /im/v1/messages`` 并带 ``parent_id`` 以实现话题
    * - ``upload_image(image_bytes, image_name)``
-     - ``POST /im/v1/images`` (returns image_key)
+     - ``POST /im/v1/images``（返回 image_key）
    * - ``upload_file(file_bytes, file_name, file_type)``
-     - ``POST /im/v1/files`` (returns file_key)
+     - ``POST /im/v1/files``（返回 file_key）
 
-Error handling
+错误处理
 --------------
 
-Any non-zero Feishu ``code`` in the response body raises ``FeishuAPIError``:
+响应体中任何非零的飞书 ``code`` 都会抛出 ``FeishuAPIError``：
 
 .. code-block:: python
 
@@ -71,14 +70,14 @@ Any non-zero Feishu ``code`` in the response body raises ``FeishuAPIError``:
    except FeishuAPIError as e:
        logger.error("Feishu API error: %s body=%s", e.msg, e.body)
 
-HTTP-level errors (4xx/5xx) raise ``httpx.HTTPStatusError``, which is
-**not** caught — callers should handle it.
+HTTP 层错误（4xx/5xx）抛出 ``httpx.HTTPStatusError``，
+**不会**被捕获——调用方应自行处理。
 
-Call stacks
+调用栈
 -----------
 
-Send a text message in a thread
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+在话题中发送文本消息
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
@@ -88,13 +87,13 @@ Send a text message in a thread
            json_data={..., "parent_id": thread_id},
            params={"receive_id_type": "chat_id"})
            └─ _headers() → _get_token()
-               └─ POST /auth/v3/tenant_access_token  [if expired]
+               └─ POST /auth/v3/tenant_access_token  [如已过期]
            └─ POST /im/v1/messages
-           └─ raise FeishuAPIError if body["code"] != 0
+           └─ 如 body["code"] != 0 则抛出 FeishuAPIError
            └─ return body["data"]["message_id"]
 
-Upload an image and send it
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+上传图片并发送
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
@@ -107,10 +106,10 @@ Upload an image and send it
            └─ POST /im/v1/images
            └─ return body["data"]["image_key"]
    └─ client.send_message(chat_id, "image", json.dumps({"image_key": key}))
-       └─ _post(...)  [same as above]
+       └─ _post(...)  [同上]
        └─ return message_id
 
-Patch a streaming card (update)
+Patch 流式卡片（更新）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
@@ -121,4 +120,4 @@ Patch a streaming card (update)
            json_data={"content": card_json})
            └─ _headers() → _get_token()
            └─ PATCH /im/v1/messages/{message_id}
-           └─ Feishu returns empty data {} on success
+           └─ 成功时飞书返回空数据 {}

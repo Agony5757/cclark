@@ -1,10 +1,10 @@
-toolbar_config — Toolbar TOML Loader
-====================================
+toolbar_config — 工具栏 TOML 加载器
+========================================
 
-Source: src/cclark/toolbar_config.py
+源码：src/cclark/toolbar_config.py
 
-Loads per-provider toolbar button layouts from a TOML config file, falling
-back to built-in defaults. Pure data + loader — no messaging platform imports.
+从 TOML 配置文件加载每个提供方的工具栏按钮布局，
+并回退到内置默认值。纯数据 + 加载器——不含消息平台导入。
 
 ``ToolbarAction``
 -----------------
@@ -13,28 +13,27 @@ back to built-in defaults. Pure data + loader — no messaging platform imports.
 
    @dataclass(frozen=True, slots=True)
    class ToolbarAction:
-       name: str           # "screen", "ctrlc", "mode", ...
-       emoji: str          # "📷", "⏹", "🔀", ...
-       text: str           # "Screen", "Ctrl-C", "Mode", ...
+       name: str           # "screen"、"ctrlc"、"mode"、...
+       emoji: str          # "📷"、"⏹"、"🔀"、...
+       text: str           # "Screen"、"Ctrl-C"、"Mode"、...
        action_type: Literal["key", "text", "builtin"]
-       payload: str       # tmux key string or text or builtin name
-       literal: bool = False   # literal key vs. named key
-       read_state: bool = False # capture pane after send
+       payload: str       # tmux 按键字符串或文本或内置名称
+       literal: bool = False   # 字面值按键 vs 命名按键
+       read_state: bool = False # 发送后捕获窗格
 
-Three action types:
+三种操作类型：
 
 ``key``
-    Sends ``payload`` as a tmux key via ``send_keys()``.
-    If ``literal=True``, the string is sent literally; otherwise treated
-    as a named key (e.g. ``"Enter"`` → tmux ``-n Enter``).
+    通过 ``send_keys()`` 发送 ``payload`` 为 tmux 按键。
+    如果 ``literal=True``，字符串直接发送；否则作为命名按键处理
+    （例如 ``"Enter"`` → tmux ``-n Enter``）。
 
 ``text``
-    Sends ``payload`` as literal text followed by Enter. Used for slash
-    commands like ``/clear``.
+    发送 ``payload`` 作为字面文本后跟回车。用于斜杠命令如 ``/clear``。
 
 ``builtin``
-    Dispatches to a special handler in ``handlers/toolbar.py``:
-    ``screenshot``, ``ctrlc``, ``live``, ``send``, ``dismiss``.
+    分发到 ``handlers/toolbar.py`` 中的特殊处理器：
+    ``screenshot``、``ctrlc``、``live``、``send``、``dismiss``。
 
 ``ToolbarLayout``
 -----------------
@@ -44,12 +43,12 @@ Three action types:
    @dataclass(frozen=True, slots=True)
    class ToolbarLayout:
        style: ButtonStyle  # "emoji" | "text" | "emoji_text"
-       buttons: tuple[tuple[str, ...], ...]  # rows × cells
+       buttons: tuple[tuple[str, ...], ...]  # 行数 × 每行格数
 
 ``ToolbarConfig``
 -----------------
 
-Resolved config holding merged actions + per-provider layouts.
+解析后的配置，包含合并后的操作和每个提供方的布局。
 
 .. code-block:: python
 
@@ -57,11 +56,11 @@ Resolved config holding merged actions + per-provider layouts.
    layout = cfg.for_provider("claude")
    action = cfg.actions["mode"]
 
-Built-in actions
+内置操作
 -----------------
 
-All built-in actions are always available (loaded into ``BUILTIN_ACTIONS``).
-User TOML may shadow them by name.
+所有内置操作始终可用（加载到 ``BUILTIN_ACTIONS``）。
+用户 TOML 可按名称覆盖它们。
 
 ``screen`` — 📷 Screen — ``builtin`` — payload: ``screenshot``
 
@@ -73,11 +72,11 @@ User TOML may shadow them by name.
 
 ``close`` — ✖ Close — ``builtin`` — payload: ``dismiss``
 
-``mode`` — 🔀 Mode — ``key`` — payload: ``\x1b[Z`` (Shift-Tab)
+``mode`` — 🔀 Mode — ``key`` — payload: ``\x1b[Z``（Shift-Tab）
 
-``think`` — 💭 Think — ``key`` — payload: ``M-t`` (Alt+T)
+``think`` — 💭 Think — ``key`` — payload: ``M-t``（Alt+T）
 
-``yolo`` — 🏆 YOLO — ``key`` — payload: ``C-y`` (Ctrl+Y)
+``yolo`` — 🏆 YOLO — ``key`` — payload: ``C-y``（Ctrl+Y）
 
 ``esc`` — ⎋ Esc — ``key`` — payload: ``Escape``
 
@@ -94,7 +93,7 @@ TOML schema
 
 .. code-block:: toml
 
-   # Optional: override a built-in action
+   # 可选：覆盖内置操作
    [actions.mode]
    emoji = "🔄"
    text  = "Mode"
@@ -102,7 +101,7 @@ TOML schema
    payload = "\\x1b[Z"   # Shift-Tab
    read_state = true
 
-   # Per-provider layout override
+   # 每个提供方的布局覆盖
    [providers.claude]
    style = "emoji_text"  # "emoji" | "text" | "emoji_text"
    buttons = [
@@ -111,14 +110,13 @@ TOML schema
      ["send",   "enter", "close"],
    ]
 
-Default layouts
+默认布局
 ---------------
 
-All five providers (claude, codex, gemini, pi, shell) have built-in default
-layouts. Unknown providers in TOML are ignored; missing providers fall back
-to the ``claude`` layout.
+五个提供方（claude、codex、gemini、pi、shell）都有内置默认布局。
+TOML 中的未知提供方被忽略；缺失的提供方回退到 ``claude`` 布局。
 
-Loading sequence
+加载序列
 ~~~~~~~~~~~~~~~~
 
 ::
@@ -126,29 +124,29 @@ Loading sequence
    load_toolbar_config("/path/to/toolbar.toml")
    → cfg = ToolbarConfig(layouts=DEFAULT_LAYOUTS, actions=BUILTIN_ACTIONS)
    → _read_toml(path) → raw dict | None
-   → _apply_user_actions(cfg, raw)  # merge into cfg.actions
-   → _apply_user_layouts(cfg, raw)  # replace matching provider layouts
+   → _apply_user_actions(cfg, raw)  # 合并到 cfg.actions
+   → _apply_user_layouts(cfg, raw)  # 替换匹配的提供方布局
    → return cfg
 
-Call stacks
+调用栈
 -----------
 
-Render a toolbar card
-~~~~~~~~~~~~~~~~~~~~~~
+渲染工具栏卡片
+~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    toolbar.show_toolbar(channel_id, window_id, adapter)
    → _get_toolbar_config()
-       → global _toolbar_config is None?
+       → 全局 _toolbar_config 为 None?
            → load_toolbar_config(config.toolbar_config_path)
-               → returns defaults (no TOML file)
+               → 返回默认值（无 TOML 文件）
        → return cfg
    → cfg.for_provider("claude")
        → cfg.layouts.get("claude") → ToolbarLayout
    → build_toolbar_card(window_id, "claude", cfg)
-       → for each row_names in layout.buttons:
-           → for each name in row_names:
+       → 对 layout.buttons 中的每行：
+           → 对行中每个 name：
                → action = cfg.actions[name]
                → label = action.render(style)  # "emoji_text" → "📷 Screen"
                → button = {"tag": "button", "text": ..., "value": {"action": f"tb:{window_id}:{name}"}}

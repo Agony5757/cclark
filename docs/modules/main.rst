@@ -1,30 +1,30 @@
-main — CLI Entry Point
+main — CLI 入口点
 =======================
 
-Source: src/cclark/main.py
+源码：src/cclark/main.py
 
-The ``cclark`` CLI script defined in ``pyproject.toml``:
+``pyproject.toml`` 中定义的 ``cclark`` CLI 脚本：
 
 .. code-block:: toml
 
    [project.scripts]
    cclark = "cclark.main:main"
 
-Also importable as:
+也可以这样导入：
 
 .. code-block:: bash
 
    python -m cclark.main
 
-``main()`` — sync wrapper
+``main()`` — 同步封装
 -------------------------
 
-Sets the Windows event loop policy and calls ``asyncio.run(_main())``.
+设置 Windows 事件循环策略并调用 ``asyncio.run(_main())``。
 
-``_main()`` — async startup sequence
+``_main()`` — 异步启动序列
 -------------------------------------
 
-Step 1 — structlog configuration
+第 1 步 — structlog 配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
@@ -35,9 +35,9 @@ Step 1 — structlog configuration
        ),
    )
 
-Configures structlog to log WARNING and INFO level only in production.
+配置 structlog 在生产环境仅记录 WARNING 和 INFO 级别日志。
 
-Step 2 — Build core objects
+第 2 步 — 构建核心对象
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
@@ -45,46 +45,46 @@ Step 2 — Build core objects
    client = FeishuClient(app_config.feishu_app_id, app_config.feishu_app_secret)
    adapter = _build_adapter(client)  → FeishuAdapter(client)
 
-Step 3 — Start unified-icc gateway
+第 3 步 — 启动 unified-icc 网关
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    gateway = UnifiedICC()
    await gateway.start()
-   → TmuxManager connects to tmux socket
-   → SessionMonitor starts polling loop
-   → StatePersistence loads ~/.cclark/state.json
+   → TmuxManager 连接到 tmux socket
+   → SessionMonitor 启动轮询循环
+   → StatePersistence 加载 ~/.cclark/state.json
 
-Step 4 — Register gateway → Feishu callbacks
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+第 4 步 — 注册网关 → 飞书回调
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    _register_callbacks(gateway, adapter)
    → gateway.on_message(on_message)
-       → on_message called on every AgentMessageEvent
+       → 每次 AgentMessageEvent 到来时调用 on_message
            → channel_ids = channel_router.resolve_channels(event.window_id)
            → adapter.send_text(channel_id, event.text)
            → adapter.send_image(channel_id, event.screenshot_bytes)
    → gateway.on_status(on_status)
-       → on_status called on status change
-           → resolve channels → build_status_card → adapter.send_card
+       → 状态变化时调用 on_status
+           → 解析频道 → build_status_card → adapter.send_card
    → gateway.on_hook_event(on_hook)
-       → on_hook called on hook events (Stop, Input, etc.)
+       → 钩子事件到来时调用 on_hook（Stop、Input 等）
            → adapter.send_text(channel_id, f"[hook] {hook_name}: {msg}")
 
-Step 5 — Wire up handler globals
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+第 5 步 — 接入处理器全局变量
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    set_handlers(gateway, adapter)
    → handlers/message._gateway = gateway
    → handlers/message._adapter = adapter
-   # → handlers/session_creation._gateway, _adapter (via import)
-   # → handlers/callback._gateway, _adapter (via import)
-   # → handlers/toolbar._gateway, _adapter (via import)
+   # → handlers/session_creation._gateway, _adapter（通过 import）
+   # → handlers/callback._gateway, _adapter（通过 import）
+   # → handlers/toolbar._gateway, _adapter（通过 import）
 
    register_message_handler(_message_handler)
    → webhook._message_handler = _message_handler
@@ -92,36 +92,36 @@ Step 5 — Wire up handler globals
    register_callback_handler(_callback_handler)
    → webhook._callback_handler = _callback_handler
 
-Step 6 — Import handlers (trigger @register decorators)
+第 6 步 — 导入处理器（触发 @register 装饰器）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    from cclark.handlers import callback, message, screenshot, session_creation, toolbar
-   # → each module imports callback_registry
-   # → @register(...) decorators fire → _registry populated
+   # → 各模块导入 callback_registry
+   # → @register(...) 装饰器执行 → _registry 被填充
 
-Step 7 — Build FastAPI app
+第 7 步 — 构建 FastAPI 应用
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    app = create_app(client)
    → FastAPI(title="cclark webhook")
-   → routes: GET /health, POST config.webhook_path
+   → 路由：GET /health、POST config.webhook_path
 
-Step 8 — Start uvicorn
-~~~~~~~~~~~~~~~~~~~~~~~
+第 8 步 — 启动 uvicorn
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    uvicorn_config = uvicorn.Config(app, host="0.0.0.0", port=app_config.webhook_port)
    server = uvicorn.Server(uvicorn_config)
    await server.serve()
-   → FastAPI listening on 0.0.0.0:8080
+   → FastAPI 监听在 0.0.0.0:8080
 
-Signal handling
-~~~~~~~~~~~~~~~
+信号处理
+~~~~~~~~~~~~~
 
 ::
 
@@ -132,28 +132,26 @@ Signal handling
        → await gateway.stop()
        → await client.close()
 
-Graceful shutdown stops the gateway (saves state) and closes the httpx client
-before the process exits.
+优雅关闭会先保存网关状态并关闭 httpx 客户端，然后退出进程。
 
-Environment variable requirements
+环境变量要求
 ---------------------------------
 
-The following env vars must be set before calling ``main()``:
+调用 ``main()`` 前必须设置以下环境变量：
 
 - ``FEISHU_APP_ID``
 - ``FEISHU_APP_SECRET``
 - ``ALLOWED_USERS``
 - ``FEISHU_BOT_USER_ID``
 
-All are loaded by ``cclark.config`` at import time. A ``ValueError`` at import
-prevents the bot from starting without credentials.
+以上全部由 ``cclark.config`` 在导入时加载。导入时的 ``ValueError``
+可防止无凭证时机器人启动。
 
-Error handling in callbacks
+回调中的错误处理
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Every gateway callback (on_message, on_status, on_hook) wraps its body in
-``try/except Exception`` to prevent a callback exception from crashing
-the gateway's poll loop:
+每个网关回调（on_message、on_status、on_hook）都将其主体用
+``try/except Exception`` 包裹，以防止回调异常导致网关轮询循环崩溃：
 
 .. code-block:: python
 

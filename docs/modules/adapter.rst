@@ -1,11 +1,10 @@
-adapter — FeishuAdapter (FrontendAdapter implementation)
-adapter — FeishuAdapter (FrontendAdapter implementation)
+adapter — FeishuAdapter（FrontendAdapter 实现）
+==================================================
 
-Source: src/cclark/adapter.py
+源码：src/cclark/adapter.py
 
-Implements ``unified_icc.adapter.FrontendAdapter`` — the contract that
-unified-icc uses to send outbound messages. This is the only module that
-knows about both the gateway interface and Feishu's API.
+实现 ``unified_icc.adapter.FrontendAdapter`` — unified-icc 用于发送出站消息的契约。
+这是唯一同时了解网关接口和飞书 API 的模块。
 
 ``FeishuAdapter``
 -----------------
@@ -17,45 +16,42 @@ knows about both the gateway interface and Feishu's API.
    client = FeishuClient(app_id, app_secret)
    adapter = FeishuAdapter(client)
 
-``FrontendAdapter`` implementation
+``FrontendAdapter`` 实现
 -----------------------------------
 
-All six methods from ``FrontendAdapter``:
+``FrontendAdapter`` 的全部六个方法：
 
 .. list-table::
    :header-rows: 1
    :widths: 35 65
 
-   * - Method
-     - Behaviour
+   * - 方法
+     - 行为
    * - ``send_text(channel_id, text)``
-     - Chunks text at 4000 chars; sends in thread if thread_id present
+     - 按 4000 字符分块发送；如有 thread_id 则在话题中回复
    * - ``send_card(channel_id, card)``
-     - Converts CardPayload → Feishu card JSON; sends as interactive card
+     - 将 CardPayload 转换为飞书卡片 JSON；作为交互卡片发送
    * - ``update_card(channel_id, card_id, card)``
-     - PATCH existing card via FeishuClient
+     - 通过 FeishuClient PATCH 已有卡片
    * - ``send_image(channel_id, image_bytes, caption)``
-     - Uploads → sends image message
+     - 上传 → 发送图片消息
    * - ``send_file(channel_id, file_path, caption)``
-     - Reads file → uploads → sends file message
+     - 读取文件 → 上传 → 发送文件消息
    * - ``show_prompt(channel_id, prompt)``
-     - Renders InteractivePrompt as card
+     - 将 InteractivePrompt 渲染为卡片
 
-Internal helpers
-Internal helpers
-
-Internal helpers:
-
-* ``_send_text_chunked`` — Splits text at 4000 chars, sends each chunk, returns last ID
-* ``_send_text_in_thread`` — Calls ``reply_in_thread`` for Feishu threading
-* ``_send_card`` — Sends card normally or as thread reply
-* ``_send_message`` — Low-level send with optional thread routing
-
-Feishu threading
+内部辅助函数
 -----------------
 
-Feishu threads use ``parent_id`` (message_id of the root thread message) to
-route replies. When a channel ID contains a thread_id:
+* ``_send_text_chunked`` — 按 4000 字符分块发送文本，返回最后一条消息 ID
+* ``_send_text_in_thread`` — 调用 ``reply_in_thread`` 实现飞书话题
+* ``_send_card`` — 正常发送卡片或作为话题回复
+* ``_send_message`` — 带可选话题路由的低级发送
+
+飞书话题机制
+-----------------
+
+飞书话题使用 ``parent_id``（根话题消息的 message_id）来路由回复。当频道 ID 包含 thread_id 时：
 
 ::
 
@@ -65,9 +61,9 @@ route replies. When a channel ID contains a thread_id:
    ↓ _send_text_in_thread / _send_card / _send_message
    FeishuClient.reply_in_thread(chat_id, msg_type, content, parent_id=thread_456)
 
-For non-threaded channels, the send is made directly without ``parent_id``.
+非话题频道直接发送，不带 ``parent_id``。
 
-CardPayload → Feishu JSON
+CardPayload → 飞书 JSON
 --------------------------
 
 ::
@@ -75,18 +71,18 @@ CardPayload → Feishu JSON
    adapter.send_card(channel_id, CardPayload(title="...", body="...", color="blue"))
    → FeishuCardBuilder.build_card(card)
        → _header_color("blue") → "blue"
-       → _md(body)  [markdown → Feishu tags]
-       → fields rendered as key-value markdown
-       → actions rendered as buttons with action.value["action"]
-       → json.dumps → card_json string
+       → _md(body)  [markdown → 飞书标签]
+       → fields 渲染为键值对 markdown
+       → actions 渲染为按钮，action.value["action"]
+       → json.dumps → card_json 字符串
    → FeishuClient.send_interactive_card(chat_id, card_json)
    → message_id
 
-Call stacks
+调用栈
 -----------
 
-Send text in a thread
-~~~~~~~~~~~~~~~~~~~~~~
+在话题中发送文本
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
@@ -94,24 +90,24 @@ Send text in a thread
    → config.split_channel_id("feishu:chat:thread")
        → ("chat", "thread")
    → _send_text_in_thread("chat", "thread", "hello")
-       → _send_text_chunked("chat", "hello")  [≤4000 chars, no chunking]
+       → _send_text_chunked("chat", "hello")  [≤4000 字符，不分块]
            → client.send_text("chat", "hello")
                → send_message("chat", "text", json.dumps({"text":"hello"}))
                    → _post("/im/v1/messages", params={...})
    → return message_id
 
-Long text (>4000 chars) is split before sending:
+长文本（>4000 字符）在发送前分块：
 
 ::
 
    adapter.send_text("feishu:chat", long_text)
    → _send_text_chunked("chat", long_text)
-       → client.send_text("chat", chunk1[:4000])  [returns msg_id_1]
-       → client.send_text("chat", chunk1[4000:])  [returns msg_id_2]
+       → client.send_text("chat", chunk1[:4000])  [返回 msg_id_1]
+       → client.send_text("chat", chunk1[4000:])  [返回 msg_id_2]
        → ...
        → return last_msg_id
 
-Send image
+发送图片
 ~~~~~~~~~~
 
 ::

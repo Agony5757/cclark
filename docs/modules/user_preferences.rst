@@ -1,10 +1,10 @@
-user_preferences — Per-User Favourites and Read Offsets
-=========================================================
+user_preferences — 用户收藏夹和读取偏移量
+===============================================
 
-Source: src/cclark/user_preferences.py
+源码：src/cclark/user_preferences.py
 
-Stores per-Feishu-user starred directories and transcript read offsets.
-Adapted from ``ccgram/user_preferences.py`` with str (not int) user IDs.
+存储每个飞书用户收藏的目录和转录本读取偏移量。
+改编自 ``ccgram/user_preferences.py``，将用户 ID 改为 str（而非 int）。
 
 ``UserPreferences``
 -------------------
@@ -13,10 +13,10 @@ Adapted from ``ccgram/user_preferences.py`` with str (not int) user IDs.
 
    from cclark.user_preferences import user_preferences
 
-   user_preferences.to_dict()    # serialize for state persistence
-   user_preferences.from_dict(d) # restore from state file
+   user_preferences.to_dict()    # 序列化用于状态持久化
+   user_preferences.from_dict(d) # 从状态文件恢复
 
-Data model
+数据模型
 ----------
 
 .. code-block:: python
@@ -27,51 +27,49 @@ Data model
    user_window_offsets: dict[str, dict[str, int]]
    # user_id → {window_id → byte_offset}
 
-Methods
+方法
 -------
 
-**Directory favorites**
+**目录收藏**
 
 .. code-block:: python
 
-   # Get starred directories
+   # 获取收藏目录
    user_preferences.get_user_starred("ou_abc123")
    # → ["/home/user/projects/ai", "/home/user/dotfiles"]
 
-   # Toggle star on/off
+   # 切换收藏状态
    user_preferences.toggle_user_star("ou_abc123", "/home/user/project")
-   # → True (now starred) / False (now unstarred)
+   # → True（已收藏）/ False（已取消收藏）
 
-   # Update MRU (most-recently-used) — called after window creation
+   # 更新 MRU（最近使用）— 在窗口创建后调用
    user_preferences.update_user_mru("ou_abc123", "/home/user/new-project")
-   # → prepends to MRU, dedupes, caps at 5 entries
+   # → 添加到 MRU 开头，去重，最多保留 5 条
 
-**Read offsets**
+**读取偏移量**
 
 .. code-block:: python
 
    user_preferences.get_user_window_offset("ou_abc123", "window_1")
-   # → 4821  (last seen byte offset)
+   # → 4821 （上一次看到的字节偏移）
 
    user_preferences.update_user_window_offset("ou_abc123", "window_1", 5100)
 
-Note: read offsets are not currently wired up in the handlers — they are
-present for future use when implementing per-user "catch up from last read"
-functionality.
+注意：读取偏移量目前在处理器中尚未接入——它们存在
+是为了将来实现每个用户"从上次阅读位置继续"功能。
 
-Serialization
+序列化
 -------------
 
-``to_dict()`` produces a plain dict suitable for JSON serialization in the
-gateway's state file. Keys are user IDs (str).
+``to_dict()`` 生成一个可用于网关状态文件 JSON 序列化的普通字典。键为用户 ID（str）。
 
-``from_dict(d)`` restores from persisted data without calling ``_schedule_save``
-(the way ccgram's original does — loading from disk must not trigger a write).
+``from_dict(d)`` 从持久化数据恢复，不调用 ``_schedule_save``
+（与 ccgram 原始实现不同——从磁盘加载不应触发写入）。
 
-Call stacks
+调用栈
 -----------
 
-Session creation — save MRU
+会话创建 — 保存 MRU
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
@@ -83,7 +81,7 @@ Session creation — save MRU
        → mru = [resolved] + [p for p in mru if p != resolved]
        → favs["mru"] = mru[:5]
 
-Toggle star on directory
+切换目录星标
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
@@ -94,6 +92,6 @@ Toggle star on directory
    → user_preferences.toggle_user_star(ctx.user_id, dir_path)
        → resolved = str(Path(dir_path).resolve())
        → starred = favs.get("starred", [])
-       → resolved in starred? → remove → return False
-       → else: append → return True
+       → resolved in starred? → 移除 → 返回 False
+       → 否则：追加 → 返回 True
        → favs["starred"] = starred

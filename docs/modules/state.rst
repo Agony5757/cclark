@@ -1,33 +1,33 @@
-state — Streaming and Toolbar State
-===================================
+state — 流式状态和工具栏状态
+=================================
 
-Source: src/cclark/state.py
+源码：src/cclark/state.py
 
-Module-level global registries for per-channel streaming state and toolbar
-state. Not persisted across restarts (in-memory only).
+每个频道的流式状态和工具栏状态的模块级全局注册表。
+不跨重启持久化（仅内存）。
 
 ``VerboseChannelState``
 -----------------------
 
-Tracks the active streaming card and turn progress for one Feishu channel:
+追踪一个飞书频道的活跃流式卡片和回合进度：
 
 .. code-block:: python
 
    @dataclass
    class VerboseChannelState:
-       streaming_card_id: str | None  # message_id of the live card
-       last_flush_ms: float          # monotonic timestamp of last flush
-       turn_states: dict[str, VerboseTurnState]  # keyed by user_id
+       streaming_card_id: str | None  # 实时卡片的 message_id
+       last_flush_ms: float          # 上次刷新的单调时间戳
+       turn_states: dict[str, VerboseTurnState]  # 按 user_id 为键
 
-``VerboseTurnState`` (nested)
+``VerboseTurnState``（嵌套）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
    @dataclass
    class VerboseTurnState:
-       last_turn_index: int  # highest turn_index user has seen
-       pending_text: str      # text accumulated since last flush
+       last_turn_index: int  # 用户已看到的最大 turn_index
+       pending_text: str      # 自上次刷新以来积累的文本
 
 ``ToolbarState``
 ----------------
@@ -36,44 +36,43 @@ Tracks the active streaming card and turn progress for one Feishu channel:
 
    @dataclass
    class ToolbarState:
-       toolbar_card_id: str | None   # message_id of displayed toolbar
-       toolbar_window_id: str | None # window the toolbar is attached to
+       toolbar_card_id: str | None   # 显示中的工具栏的 message_id
+       toolbar_window_id: str | None # 工具栏所附着的窗口
 
-Global registry accessors
+全局注册表访问器
 -------------------------
 
 ::
 
-   _verbose_states: dict[str, VerboseChannelState]  # keyed by channel_id
-   _toolbar_states: dict[str, ToolbarState]        # keyed by channel_id
+   _verbose_states: dict[str, VerboseChannelState]  # 按 channel_id 为键
+   _toolbar_states: dict[str, ToolbarState]        # 按 channel_id 为键
 
    get_verbose_state(channel_id) → VerboseChannelState
    get_toolbar_state(channel_id) → ToolbarState
-   reset_channel_state(channel_id)  # clears both on unbind
+   reset_channel_state(channel_id)  # 取消绑定时清除两者
 
-Persistence
+持久化
 -----------
 
-This module is **not persisted**. Streaming and toolbar state are rebuilt
-from the gateway events after a restart. The ``VerboseCardStreamer`` in
-``cards/streaming.py`` is the primary consumer.
+此模块**不持久化**。流式状态和工具栏状态在重启后从网关事件重建。
+``cards/streaming.py`` 中的 ``VerboseCardStreamer`` 是主要消费者。
 
-The VerboseCardStreamer uses ``get_verbose_state`` to:
+VerboseCardStreamer 使用 ``get_verbose_state`` 来：
 
-1. Check if a streaming card already exists (``streaming_card_id``)
-2. Patch it on subsequent flushes rather than creating new cards
-3. Store the last flush timestamp for debounce calculations
+1. 检查流式卡片是否已存在（``streaming_card_id``）
+2. 在后续刷新时 patch 它而非创建新卡片
+3. 存储上次刷新时间戳用于防抖计算
 
-Call stacks
+调用栈
 -----------
 
-Streaming card — first flush (new card)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+流式卡片 — 首次刷新（新卡片）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    VerboseCardStreamer.push("hello", turn_index=0)
-   → turn_index changed? → _flush()
+   → turn_index 变化? → _flush()
        → _pending = ["hello"]
        → _pending_chars = 5
        → self._state.last_flush_ms = now
@@ -82,40 +81,39 @@ Streaming card — first flush (new card)
            → POST /im/v1/messages → message_id = "om_xxx"
        → self._state.streaming_card_id = "om_xxx"
 
-Streaming card — second flush (patch)
+流式卡片 — 第二次刷新（patch）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    VerboseCardStreamer.push(" world", turn_index=0)
    → _pending = ["hello", " world"], _pending_chars += 6
-   → _flush() called by interval
+   → 定时触发 _flush()
        → text = "hello world"
-       → _state.streaming_card_id already set
+       → _state.streaming_card_id 已设置
        → client.patch_message("om_xxx", card_json)
-           → PATCH /im/v1/messages/om_xxx → updates card
+           → PATCH /im/v1/messages/om_xxx → 更新卡片
 
-New turn — new streaming card
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+新回合 — 新的流式卡片
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    VerboseCardStreamer.push("next turn", turn_index=1)
-   → turn_index changed (0 → 1)
-   → _flush() → sends "hello world" in one card
-   → self._state.streaming_card_id = None  [_flush() resets it]
+   → turn_index 变化（0 → 1）
+   → _flush() → 发送回合 0 的卡片，设置 streaming_card_id = None
    → self._turn_index = 1
-   → push appends to new _pending
-   → _flush() → client.send_interactive_card() → new message_id
+   → push 添加到新 _pending
+   → 下次刷新 → 新卡片通过 send_interactive_card() 发送
 
-Toolbar update (patch existing toolbar)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+工具栏更新（patch 已有工具栏）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    toolbar.show_toolbar(channel_id, window_id, adapter)
    → get_toolbar_state(channel_id) → ToolbarState(...)
-   → toolbar_state.toolbar_card_id already set?
+   → toolbar_state.toolbar_card_id 已设置?
        → client.patch_message(card_id, card_json)
-           → toolbar card updated in-place
-   → else: adapter.send_interactive_card(...) → toolbar_card_id stored
+           → 工具栏卡片就地更新
+   → 否则：adapter.send_interactive_card(...) → toolbar_card_id 被存储

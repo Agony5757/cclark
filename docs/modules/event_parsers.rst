@@ -1,23 +1,23 @@
-event_parsers — Feishu JSON → Typed Events
+event_parsers — 飞书 JSON → 类型化事件
 ==========================================
 
-Source: src/cclark/event_parsers.py
+源码：src/cclark/event_parsers.py
 
-Converts raw Feishu webhook JSON payloads into typed Python dataclasses.
-Three event types:
+将原始飞书 Webhook JSON 负载转换为类型化 Python 数据类。
+三种事件类型：
 
 .. list-table::
    :header-rows: 1
    :widths: 30 70
 
-   * - Type
-     - Source
+   * - 类型
+     - 来源
    * - ``FeishuMessageEvent``
-     - ``im.message.receive_v1`` event payload
+     - ``im.message.receive_v1`` 事件负载
    * - ``FeishuCallbackEvent``
-     - Card button click callback payload
+     - 卡片按钮点击回调负载
    * - ``FeishuURLVerificationEvent``
-     - Webhook URL verification challenge
+     - Webhook URL 验证挑战
 
 ``FeishuMessageEvent``
 -----------------------
@@ -27,13 +27,13 @@ Three event types:
    @dataclass(frozen=True)
    class FeishuMessageEvent:
        chat_id: str       # "oc_xxxx"
-       thread_id: str     # "" for non-threaded chats
-       user_id: str       # Feishu open_id of sender
-       text: str          # stripped text content
-       message_id: str    # for reply threading
-       msg_type: str      # "text", "image", etc.
+       thread_id: str     # 非话题聊天时为 ""
+       user_id: str       # 发送者的飞书 open_id
+       text: str          # 去空格后的文本内容
+       message_id: str     # 用于回复话题
+       msg_type: str      # "text"、"image" 等
 
-Parsing logic for ``parse_message_event``:
+``parse_message_event`` 解析逻辑：
 
 ::
 
@@ -41,15 +41,15 @@ Parsing logic for ``parse_message_event``:
                         "sender": {"sender_id": {"open_id": "..."}},
                         "message": {"msg_type": "text", "message_id": "...",
                                    "content": "{\"text\": \"...\"}"}}}
-   ↓ extract event, sender, message
-   ↓ msg_type != "text"? → return None  [only handle text]
+   ↓ 提取 event、sender、message
+   ↓ msg_type != "text"? → 返回 None  [仅处理文本]
    ↓ json.loads(content) → {"text": "..."}
    ↓ text = parsed["text"].strip()
    ↓ FeishuMessageEvent(...)
-   ↓ any exception → return None
+   ↓ 任何异常 → 返回 None
 
-The JSON ``content`` field from Feishu for text messages is itself a JSON
-string, hence the double parse.
+飞书文本消息的 JSON ``content`` 字段本身又是一个 JSON 字符串，
+所以需要双重解析。
 
 ``FeishuCallbackEvent``
 -----------------------
@@ -59,13 +59,13 @@ string, hence the double parse.
    @dataclass(frozen=True)
    class FeishuCallbackEvent:
        chat_id: str
-       user_id: str       # open_id of clicking user
-       action_value: str  # "db:sel:/path", "tb:window:mode", etc.
-       message_id: str     # card message that was clicked
-       token: str         # verification token
+       user_id: str       # 点击用户的 open_id
+       action_value: str  # "db:sel:/path"、"tb:window:mode" 等
+       message_id: str     # 被点击的卡片消息 ID
+       token: str         # 验证令牌
        thread_id: str = ""
 
-Parsing logic for ``parse_callback_event``:
+解析逻辑：
 
 ::
 
@@ -74,8 +74,8 @@ Parsing logic for ``parse_callback_event``:
               "chat": {"chat_id": "...", "thread_id": "..."},
               "sender": {"sender_id": {"open_id": "..."}},
               "token": "..."}
-   ↓ action["value"] may be str or dict
-   ↓ if str → json.loads
+   ↓ action["value"] 可能是 str 或 dict
+   ↓ 如为 str → json.loads
    ↓ action_value = value["action"]
    ↓ FeishuCallbackEvent(...)
 
@@ -87,13 +87,13 @@ Parsing logic for ``parse_callback_event``:
    def is_card_callback(payload: dict) -> bool:
        return "action" in payload and "value" in payload.get("action", {})
 
-This distinguishes card callbacks from message events — message events have
-``event.message`` but card callbacks have ``action.value``.
+这用于区分卡片回调和消息事件——消息事件有 ``event.message``，
+卡片回调有 ``action.value``。
 
-Call stacks
+调用栈
 ------------
 
-Parse a text message event
+解析文本消息事件
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
@@ -107,13 +107,13 @@ Parse a text message event
        → return FeishuMessageEvent(chat_id=..., user_id=..., text="hello", ...)
    → handle_message(event)  [handlers/message.py]
 
-Parse a card button click
+解析卡片按钮点击
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    webhook._handle_callback(payload)
-   → is_card_callback(payload) → True  [checked before this call]
+   → is_card_callback(payload) → True  [此调用前已检查]
    → parse_callback_event(payload)
        → payload["action"]["value"] = '{"action": "tb:win1:mode"}'
        → json.loads → {"action": "tb:win1:mode"}

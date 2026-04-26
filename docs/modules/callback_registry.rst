@@ -1,16 +1,15 @@
-callback_registry — Longest-Prefix Callback Dispatch
-callback_registry — Longest-Prefix Callback Dispatch
+callback_registry — 最长前缀回调分发
+=========================================
 
-Source: src/cclark/callback_registry.py
+源码：src/cclark/callback_registry.py
 
-Self-registering decorator-based dispatch for Feishu card button clicks.
-Each handler module registers its own prefixes at import time; the registry
-performs longest-prefix matching at runtime.
+用于飞书卡片按钮点击的自我注册式基于装饰器的分发机制。
+各处理器模块在导入时注册自己的前缀；注册表在运行时执行最长前缀匹配。
 
-``@register`` decorator
+``@register`` 装饰器
 -----------------------
 
-Handlers use ``@register`` to declare which action-value prefixes they handle:
+处理器使用 ``@register`` 声明自己处理哪些 action-value 前缀：
 
 .. code-block:: python
 
@@ -20,65 +19,61 @@ Handlers use ``@register`` to declare which action-value prefixes they handle:
    async def handle_dir(ctx: CallbackContext) -> None:
        ...
 
-Multiple prefixes can be registered for a single handler (shared handler for
-all navigation actions). The same prefix cannot be registered twice.
+一个处理器可注册多个前缀（所有导航操作共享处理器）。同一前缀不能重复注册。
 
 CallbackContext
 ---------------
 
-Parsed payload passed to every handler:
+传给每个处理器的已解析负载：
 
 .. code-block:: python
 
    @dataclass
    class CallbackContext:
-       user_id: str       # open_id of clicking user
-       chat_id: str       # Feishu chat_id
-       thread_id: str     # Feishu thread_id (may be "")
-       value: str        # raw action value, e.g. "db:sel:/home/user"
-       message_id: str    # card message ID
-       token: str         # verification token
-       channel_id: str    # "feishu:chat:thread" or "feishu:chat"
+       user_id: str       # 点击用户的 open_id
+       chat_id: str       # 飞书 chat_id
+       thread_id: str     # 飞书 thread_id（可能为 ""）
+       value: str        # 原始 action 值，例如 "db:sel:/home/user"
+       message_id: str    # 卡片消息 ID
+       token: str         # 验证令牌
+       channel_id: str    # "feishu:chat:thread" 或 "feishu:chat"
 
-Longest-prefix matching
+最长前缀匹配
 -----------------------
 
-When ``dispatch(ctx)`` is called, it finds the registered handler whose prefix
-is the longest match for ``ctx.value``:
+调用 ``dispatch(ctx)`` 时，它找到注册前缀对 ``ctx.value`` 匹配最长的那个处理器：
 
 ::
 
    ctx.value = "db:sel:/home/user/project"
-   registered prefixes: "db:sel:", "db:up", "db:"
-   "db:sel:" matches (8 chars) ← longest
+   已注册前缀："db:sel:"、"db:up"、"db:"
+   "db:sel:" 匹配（8 字符）← 最长
    → handle_dir_callback(ctx)
 
-Prefixes must be registered at module import time (before ``dispatch`` is first
-called). Handler modules are imported by ``main.py``:
+前缀必须在模块导入时注册（在首次调用 ``dispatch`` 之前）。
+处理器模块由 ``main.py`` 导入：
 
 .. code-block:: python
 
    from cclark.handlers import callback, message, session_creation, toolbar
-   # → session_creation.py imports callback_registry
-   # → @register("db:sel:", ...) decorators fire
-   # → _registry dict populated
+   # → session_creation.py 导入 callback_registry
+   # → @register("db:sel:", ...) 装饰器执行
+   # → _registry 字典被填充
 
-This deferred import avoids circular dependency issues — the registry
-module is loaded early, and individual handler modules register themselves
-when imported.
+这种延迟导入避免了循环依赖问题——注册表模块提前加载，
+各处理器模块在导入时注册自己。
 
-``load_handlers`` function
+``load_handlers`` 函数
 ---------------------------
 
-``callback_registry.load_handlers()`` triggers the import side effects
-explicitly. Called by ``main.py`` to ensure handlers are loaded before
-serving requests.
+``callback_registry.load_handlers()`` 显式触发导入副作用。
+由 ``main.py`` 调用以确保在服务请求前加载处理器。
 
-Registered prefixes
+已注册前缀
 -------------------
 
 =========================  ====================================================
-Prefix                     Handler
+前缀                       处理器
 =========================  ====================================================
 ``db:sel:``                ``session_creation.handle_dir_callback``
 ``db:up``                  ``session_creation.handle_dir_callback``
@@ -93,13 +88,13 @@ Prefix                     Handler
 ``sh:x:``                  ``callback._shell_deny``
 ``sess:kill:``             ``callback._session_kill``
 ``sess:show:``             ``callback._session_show``
-``noop`` / ``cancel``      ``callback.dispatch`` (catch-all)
+``noop`` / ``cancel``      ``callback.dispatch``（全匹配）
 =========================  ====================================================
 
-Call stacks
+调用栈
 -----------
 
-Toolbar button click → tmux key send
+工具栏按钮点击 → tmux 发送按键
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
@@ -110,8 +105,8 @@ Toolbar button click → tmux key send
    → CallbackContext(value="tb:win1:ctrlc", ...)
    → callback_registry.dispatch(ctx)
        → _find_handler("tb:")
-           → registered prefixes: "tb:",
-           → best match: "tb:" (3 chars)
+           → 已注册前缀："tb:",
+           → 最佳匹配："tb:"（3 字符）
            → return toolbar.handle_toolbar_callback
        → await handle_toolbar_callback(ctx)
            → ctx.value[len("tb:"):] = "win1:ctrlc"
@@ -120,12 +115,12 @@ Toolbar button click → tmux key send
            → _get_toolbar_config().actions.get("ctrlc")
                → ToolbarAction(name="ctrlc", action_type="builtin", payload="ctrlc")
            → action_type == "builtin"? → _handle_builtin("ctrlc", ...)
-               → "ctrlc" in ("ctrlc", "send", "enter")? → key_map["ctrlc"] = "\x03"
+               → "ctrlc" 在 ("ctrlc", "send", "enter")? → key_map["ctrlc"] = "\x03"
                → gateway.send_key("win1", "\x03")
                    → tmux_manager.send_keys("win1", "\x03")
                    → tmux send-keys -t win1 "\x03"
 
-Provider picker → mode picker card
+提供方选择器 → 模式选择器卡片
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
@@ -135,6 +130,6 @@ Provider picker → mode picker card
    → handle_provider_callback(ctx)
        → provider = ctx.value[len("prov:"):] = "claude"
        → state["provider"] = "claude"
-       → provider == "shell"? → skip mode picker
+       → provider == "shell"? → 跳过模式选择器
        → _build_mode_picker_card(path, "claude")
        → adapter.send_interactive_card(channel_id, card_json)

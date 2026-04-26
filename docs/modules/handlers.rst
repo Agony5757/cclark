@@ -1,16 +1,16 @@
-handlers — Event Handler Modules
-================================
+handlers — 事件处理器模块
+=================================
 
-Source: src/cclark/handlers/
+源码：src/cclark/handlers/
 
-Five handler modules, each handling a distinct class of inbound event.
+五个处理器模块，每个处理一类入站事件。
 
-handlers/message.py — Inbound Text
-------------------------------------
+handlers/message.py — 入站文本
+-------------------------------------
 
-Routes every text message from Feishu. Acts as the traffic controller.
+路由来自飞书的每条文本消息。充当交通指挥官。
 
-Message flow
+消息流程
 ~~~~~~~~~~~~
 
 ::
@@ -18,45 +18,44 @@ Message flow
    webhook._handle_message → event_parsers.parse_message_event → FeishuMessageEvent
    → handlers/message.py:handle_message(event)
        → text.startswith("/")?
-           → _handle_command()  [slash commands]
+           → _handle_command()  [斜杠命令]
        → gateway.channel_router.resolve_window(channel_id) → window_id | None
-           → window_id is None?
+           → window_id 为 None?
                → _handle_new_channel(event, channel_id)
                    → session_creation.start_session_creation()
-           → window_id found?
+           → 找到 window_id?
                → gateway.send_to_window(window_id, text)
                    → tmux send-keys
-               → error?
+               → 错误?
                    → adapter.send_text(channel_id, f"Failed: {err}")
 
-Slash commands
+斜杠命令
 ~~~~~~~~~~~~~~~
 
-``/new``, ``/start``
-    Start directory browser for new session
+``/new``、``/start``
+    为新会话启动目录浏览器
 
 ``/sessions``
-    List active windows via status card
+    通过状态卡片列出活跃窗口
 
 ``/help``
-    Send help text
+    发送帮助文本
 
 ``/verbose``
-    Toggle verbose streaming mode
+    切换详细流式模式
 
 ``/screenshot``
-    Capture and send screenshot
+    捕获并发送截图
 
 ``/toolbar``
-    Show toolbar card for active session
+    为活跃会话显示工具栏卡片
 
-handlers/callback.py — Callback Dispatcher
---------------------------------------------
+handlers/callback.py — 回调分发器
+-----------------------------------------
 
-Handles shell approval/denial and session management. Registers catch-all
-prefixes only (``noop``, ``cancel``, ``sh:*``, ``sess:*``). All other
-prefixes are dispatched from here to sub-handlers via longest-prefix
-match in ``callback_registry``.
+处理 Shell 批准/拒绝和会话管理。仅注册通配前缀
+（``noop``、``cancel``、``sh:*``、``sess:*``）。其他
+前缀由此通过 ``callback_registry`` 中的最长前缀匹配分发给子处理器。
 
 .. code-block:: python
 
@@ -68,37 +67,36 @@ match in ``callback_registry``.
        window_id = ctx.value[len(SESSION_KILL):]
        await _gateway.kill_window(window_id)
 
-handlers/session_creation.py — New Session Flow
-------------------------------------------------
+handlers/session_creation.py — 新建会话流程
+-------------------------------------------------
 
-Implements the multi-step session creation flow: directory browser →
-provider picker → mode picker → window creation.
+实现多步会话创建流程：目录浏览器 → 提供方选择器 → 模式选择器 → 窗口创建。
 
-Per-user browse state (``_browse_state[user_id]``)
+每个用户的浏览状态（``_browse_state[user_id]``）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    {
-       "path": "/home/user/project",   # current directory
-       "page": 0,                       # pagination index
+       "path": "/home/user/project",   # 当前目录
+       "page": 0,                     # 分页索引
        "channel_id": "feishu:chat:thread",
-       "provider": "claude",             # selected provider
-       "original_text": "/new",          # triggering message text
+       "provider": "claude",           # 选中的提供方
+       "original_text": "/new",        # 触发消息文本
    }
 
-Step 1 — Directory browser
+第 1 步 — 目录浏览器
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
-   message.handle_message [unbound channel]
+   message.handle_message [未绑定频道]
    → session_creation.start_session_creation(event, channel_id)
        → _browse_state[user_id] = {path: home, page: 0, ...}
        → _build_dir_browser_card(home, 0, user_id) → card_json
        → adapter.send_interactive_card(channel_id, card_json)
 
-Button: navigate into subdirectory
+按钮：进入子目录
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
@@ -110,8 +108,8 @@ Button: navigate into subdirectory
    → _build_dir_browser_card(new_path, 0, user_id)
    → adapter.send_interactive_card(channel_id, card_json)
 
-Button: navigate up
-~~~~~~~~~~~~~~~~~~~
+按钮：进入上级目录
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
@@ -119,9 +117,9 @@ Button: navigate up
    → handle_dir_callback
    → parent = Path(state["path"]).resolve().parent
    → state["path"] = str(parent)
-   → rebuild card
+   → 重建卡片
 
-Button: confirm directory
+按钮：确认目录
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
@@ -132,8 +130,8 @@ Button: confirm directory
    → _build_provider_picker_card("/home/user/project") → card_json
    → adapter.send_interactive_card(channel_id, card_json)
 
-Button: select provider
-~~~~~~~~~~~~~~~~~~~~~~~
+按钮：选择提供方
+~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
@@ -144,7 +142,7 @@ Button: select provider
    → _build_mode_picker_card(path, "claude") → card_json
    → adapter.send_interactive_card(channel_id, card_json)
 
-Button: select mode → create window
+按钮：选择模式 → 创建窗口
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
@@ -155,31 +153,31 @@ Button: select mode → create window
    → _create_window(ctx, path, "claude", "yolo")
        → gateway.create_window(path, provider="claude", approval_mode="yolo")
            → TmuxManager.create_window() → tmux new-window
-           → return Window object
+           → 返回 Window 对象
        → gateway.bind_channel(ctx.channel_id, window_id)
-       → gateway.send_to_window(window_id, pending_text)  [if any]
+       → gateway.send_to_window(window_id, pending_text)  [如有]
        → adapter.send_text(channel_id, f"Session started: {window_name}")
 
-handlers/toolbar.py — Toolbar Card and Actions
-------------------------------------------------
+handlers/toolbar.py — 工具栏卡片和操作
+---------------------------------------------
 
-Shows a toolbar card and handles all button clicks.
+显示工具栏卡片并处理所有按钮点击。
 
-Toolbar card structure
-~~~~~~~~~~~~~~~~~~~~~~
+工具栏卡片结构
+~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
    build_toolbar_card(window_id, provider, cfg, status_label)
-   → for each row in layout.buttons:
-       → for each action_name in row:
+   → 对 layout.buttons 中的每行：
+       → 对每行中每个 action_name：
            → action = cfg.actions[name]
            → label = action.render(style)  # "🔀 Mode"
            → button value = f"tb:{window_id}:{name}"
    → json.dumps → card_json
 
-Toolbar button dispatch
-~~~~~~~~~~~~~~~~~~~~~~~
+工具栏按钮分发
+~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
@@ -190,8 +188,8 @@ Toolbar button dispatch
        → gateway.send_key(window_id, key_map["ctrlc"])
            → tmux send-keys -t win1 "\x03"
 
-Built-in action dispatch (``_handle_builtin``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+内置操作分发（``_handle_builtin``）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``screenshot``
     ``capture_screenshot`` → ``send_image``
@@ -200,12 +198,12 @@ Built-in action dispatch (``_handle_builtin``)
     ``capture_pane`` → ``send_text``
 
 ``dismiss``
-    Clear ``toolbar_card_id`` from state
+    清除状态中的 ``toolbar_card_id``
 
 ``ctrlc`` / ``send`` / ``enter``
-    ``send_key`` with mapped key
+    用映射的按键调用 ``send_key``
 
-handlers/screenshot.py — Pane Capture
+handlers/screenshot.py — 窗格捕获
 --------------------------------------
 
 ::
@@ -215,7 +213,7 @@ handlers/screenshot.py — Pane Capture
        → gateway.capture_screenshot(window_id)
            → TmuxManager.capture_screenshot(window_id)
                → tmux capture-pane -t {window_id}
-               → pyte.Screen + Pillow rendering
+               → pyte.Screen + Pillow 渲染
        → adapter.send_image(channel_id, screenshot_bytes)
            → FeishuClient.upload_image() → image_key
            → FeishuClient.send_message("image", ...)
