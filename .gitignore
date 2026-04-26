@@ -8,3 +8,12 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local lock file (managed per-machine)
+uv.lock
+
+# Embedded repos
+ccgram/
+
+# Docs build output
+docs/_build/
