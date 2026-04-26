@@ -38,7 +38,7 @@ async def _register_callbacks(gateway: UnifiedICC, adapter: FeishuAdapter) -> No
     # Message callbacks — forward agent output to the channel
     async def on_message(event) -> None:
         try:
-            channel_ids = gateway.channel_router.resolve_channels(event.window_id)
+            channel_ids = getattr(gateway, "channel_router").resolve_channels(event.window_id)
             for channel_id in channel_ids:
                 if event.text:
                     await adapter.send_text(channel_id, event.text)
@@ -49,7 +49,7 @@ async def _register_callbacks(gateway: UnifiedICC, adapter: FeishuAdapter) -> No
 
     async def on_status(event) -> None:
         try:
-            channel_ids = gateway.channel_router.resolve_channels(event.window_id)
+            channel_ids = getattr(gateway, "channel_router").resolve_channels(event.window_id)
             for channel_id in channel_ids:
                 from cclark.cards.status import build_status_card
                 card = build_status_card(
@@ -59,13 +59,13 @@ async def _register_callbacks(gateway: UnifiedICC, adapter: FeishuAdapter) -> No
                     status=event.status,
                     working_dir=event.working_dir or "",
                 )
-                await adapter.send_card(channel_id, card)
+                await adapter.send_interactive_card(channel_id, card)
         except Exception:  # noqa: BLE001
             logger.exception("on_status handler failed")
 
     async def on_hook(event) -> None:
         try:
-            channel_ids = gateway.channel_router.resolve_channels(event.window_id)
+            channel_ids = getattr(gateway, "channel_router").resolve_channels(event.window_id)
             for channel_id in channel_ids:
                 await adapter.send_text(channel_id, f"[hook] {event.hook_name}: {event.message}")
         except Exception:  # noqa: BLE001
@@ -88,12 +88,6 @@ async def _message_handler(event) -> None:
 
 async def _main() -> None:
     """Start the cclark bot."""
-    structlog.configure(
-        wrapper_class=structlog.make_filtering_bound_logger(
-            {"WARNING": structlog.level.WARNING, "INFO": structlog.level.INFO}
-        ),
-    )
-
     client = FeishuClient(app_config.feishu_app_id, app_config.feishu_app_secret)
     adapter = _build_adapter(client)
 

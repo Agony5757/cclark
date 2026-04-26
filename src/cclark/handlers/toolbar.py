@@ -9,7 +9,7 @@ from cclark.callback_data import TB
 from cclark.callback_registry import CallbackContext, register
 from cclark.cards.toolbar import build_toolbar_card
 from cclark.state import get_toolbar_state
-from cclark.toolbar_config import load_toolbar_config
+from cclark.toolbar_config import ToolbarConfig, load_toolbar_config
 
 logger = structlog.get_logger()
 
@@ -17,7 +17,7 @@ logger = structlog.get_logger()
 _toolbar_config = None
 
 
-def _get_toolbar_config() -> object:
+def _get_toolbar_config() -> ToolbarConfig:
     global _toolbar_config
     if _toolbar_config is None:
         path = None

@@ -109,6 +109,11 @@ class FeishuAdapter:
             )
         return await self._client.send_interactive_card(chat_id, card_json)
 
+    async def send_interactive_card(self, channel_id: str, card_json: str) -> str:
+        """Send a pre-built interactive card JSON to a channel."""
+        chat_id, thread_id = config.split_channel_id(channel_id)
+        return await self._send_card(chat_id, thread_id, card_json)
+
     async def _send_message(
         self, chat_id: str, thread_id: str, msg_type: str, content: str
     ) -> str:

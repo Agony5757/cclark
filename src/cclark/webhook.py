@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from cclark.callback_registry import CallbackContext
 from cclark.config import config
 from cclark.event_parsers import (
+    FeishuMessageEvent,
     is_card_callback,
     parse_callback_event,
     parse_message_event,
@@ -22,16 +23,16 @@ from cclark.feishu_client import FeishuClient
 logger = structlog.get_logger()
 
 # Module-level callback handler registration
-_callback_handler: Callable[[dict], Awaitable[None]] | None = None
-_message_handler: Callable[[dict], Awaitable[None]] | None = None
+_callback_handler: Callable[[CallbackContext], Awaitable[None]] | None = None
+_message_handler: Callable[[FeishuMessageEvent], Awaitable[None]] | None = None
 
 
-def register_message_handler(handler: Callable[[dict], Awaitable[None]]) -> None:
+def register_message_handler(handler: Callable[[FeishuMessageEvent], Awaitable[None]]) -> None:
     global _message_handler
     _message_handler = handler
 
 
-def register_callback_handler(handler: Callable[[dict], Awaitable[None]]) -> None:
+def register_callback_handler(handler: Callable[[CallbackContext], Awaitable[None]]) -> None:
     global _callback_handler
     _callback_handler = handler
 

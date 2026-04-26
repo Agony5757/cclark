@@ -81,7 +81,7 @@ def _build_dir_browser_card(  # noqa: C901
 
     # Build elements
     header_md = f"**Directory:** `{_esc(path)}`"
-    elements = [{"tag": "markdown", "content": header_md}]
+    elements: list[dict[str, Any]] = [{"tag": "markdown", "content": header_md}]
 
     if fav_entries:
         fav_lines = [
@@ -101,9 +101,9 @@ def _build_dir_browser_card(  # noqa: C901
     nav_buttons.append(_mkbtn("🏠 Home", "db:home"))
     elements.append({"tag": "action", "children": nav_buttons})
 
+    actions: list[dict[str, Any]] = []
     if page_entries:
         dir_lines = []
-        actions = []
         for i, entry in enumerate(page_entries):
             full_path = str(p / entry["name"])
             line = f"[📁 {entry['name']}](action:db:sel:{_enc(full_path)})"
@@ -155,10 +155,10 @@ def _build_provider_picker_card(selected_path: str) -> str:
     ]
 
     buttons = [
-        _mkbtn(label, f"prov:{provider}")
-        for label, provider in providers
+        _mkbtn(label, f"prov:{provider_id}")
+        for label, _desc, provider_id in providers
     ]
-    elements.append({"tag": "action", "children": buttons})
+    elements.append({"tag": "action", "children": buttons})  # type: ignore[arg-type]
 
     return json.dumps({
         "config": {"wide_screen_mode": True},
@@ -184,7 +184,7 @@ def _build_mode_picker_card(selected_path: str, provider: str) -> str:
         _mkbtn("📝 Standard (approval)", "mode:standard"),
         _mkbtn("🚀 YOLO (no approval)", "mode:yolo"),
     ]
-    elements.append({"tag": "action", "children": buttons})
+    elements.append({"tag": "action", "children": buttons})  # type: ignore[arg-type]
 
     return json.dumps({
         "config": {"wide_screen_mode": True},
@@ -211,10 +211,10 @@ def _esc(s: str) -> str:
 
 # ── Per-user browse state (simple in-memory) ────────────────────────────────
 
-_browse_state: dict[str, dict[str, str | int]] = {}
+_browse_state: dict[str, dict[str, Any]] = {}
 
 
-def _get_state(user_id: str) -> dict[str, str | int]:
+def _get_state(user_id: str) -> dict[str, Any]:
     return _browse_state.setdefault(user_id, {})
 
 
@@ -262,9 +262,9 @@ async def handle_dir_callback(ctx: CallbackContext) -> None:
         except ValueError:
             page = 0
         state["page"] = page
-        path = state.get("path", str(Path.home()))
+        path: str = state.get("path") or str(Path.home())
     elif value == DB_UP:
-        parent = Path(state.get("path", str(Path.home()))).resolve().parent
+        parent = Path(state.get("path") or str(Path.home())).resolve().parent
         path = str(parent)
         state["path"] = path
         state["page"] = 0
@@ -278,15 +278,15 @@ async def handle_dir_callback(ctx: CallbackContext) -> None:
         user_preferences.toggle_user_star(ctx.user_id, dir_path)
         return  # Just update the star, don't rebuild card
     elif value == DB_CONFIRM:
-        selected_path = state.get("path", str(Path.home()))
+        selected_path: str = state.get("path") or str(Path.home())
         user_preferences.update_user_mru(ctx.user_id, selected_path)
         card_json = _build_provider_picker_card(selected_path)
         await _adapter.send_interactive_card(ctx.channel_id, card_json)
         return
     else:
-        path = state.get("path", str(Path.home()))
+        path = state.get("path") or str(Path.home())
 
-    card_json, _ = _build_dir_browser_card(path, state.get("page", 0), ctx.user_id)
+    card_json, _ = _build_dir_browser_card(path, int(state["page"]), ctx.user_id)
     await _adapter.send_interactive_card(ctx.channel_id, card_json)
 
 
@@ -300,7 +300,7 @@ async def handle_provider_callback(ctx: CallbackContext) -> None:
     provider = ctx.value[len(PROV):]
     state = _get_state(ctx.user_id)
     state["provider"] = provider
-    selected_path = state.get("path", str(Path.home()))
+    selected_path: str = state.get("path") or str(Path.home())
 
     # Shell has no mode picker
     if provider == "shell":
@@ -318,8 +318,8 @@ async def handle_mode_callback(ctx: CallbackContext) -> None:
 
     value = ctx.value
     state = _get_state(ctx.user_id)
-    provider = state.get("provider", config.default_provider)
-    selected_path = state.get("path", str(Path.home()))
+    provider: str = state.get("provider") or config.default_provider
+    selected_path: str = state.get("path") or str(Path.home())
 
     mode = "yolo" if value == MODE_YOLO else "standard"
 
@@ -368,9 +368,9 @@ async def _create_window(
     )
 
     # Forward the message that triggered session creation
-    if pending_text and pending_text.strip():
+    if pending_text and str(pending_text).strip():
         # Strip the /new command
-        text = pending_text.strip()
+        text = str(pending_text).strip()
         for prefix in ("/new", "/start"):
             if text.startswith(prefix):
                 text = text[len(prefix):].strip()

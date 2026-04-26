@@ -51,8 +51,8 @@ class FeishuClient:
         data = resp.json()
         if data.get("code") != 0:
             raise FeishuAPIError(data.get("msg", "auth failed"), data)
-        self._tenant_access_token = data["tenant_access_token"]
-        self._token_expires_at = now + data.get("expire", 7200)
+        self._tenant_access_token = str(data["tenant_access_token"])
+        self._token_expires_at = now + float(data.get("expire", 7200))
         logger.debug("Feishu token refreshed, expires in %ss", data.get("expire", 7200))
         return self._tenant_access_token
 

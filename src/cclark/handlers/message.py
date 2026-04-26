@@ -45,7 +45,8 @@ async def handle_message(event: FeishuMessageEvent) -> None:
     ok, err = await _gateway.send_to_window(window_id, text)
     if not ok:
         logger.error("Failed to send to window %s: %s", window_id, err)
-        await _adapter.send_text(channel_id, f"Failed to send: {err}")
+        if _adapter:
+            await _adapter.send_text(channel_id, f"Failed to send: {err}")
 
 
 async def _handle_command(
@@ -69,7 +70,8 @@ async def _handle_command(
     elif cmd == "/toolbar":
         await _handle_toolbar(channel_id)
     else:
-        await _adapter.send_text(channel_id, f"Unknown command: {cmd}\nUse /help for available commands.")
+        if _adapter:
+            await _adapter.send_text(channel_id, f"Unknown command: {cmd}\nUse /help for available commands.")
 
 
 async def _handle_new_channel(event: FeishuMessageEvent, channel_id: str) -> None:

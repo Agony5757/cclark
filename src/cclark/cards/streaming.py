@@ -49,16 +49,16 @@ class VerboseCardStreamer:
     def turn_index(self) -> int:
         return self._turn_index
 
-    def set_turn_index(self, index: int) -> None:
+    async def set_turn_index(self, index: int) -> None:
         """Signal that the agent turn has advanced."""
         if index != self._turn_index:
-            self._flush()
+            await self._flush()
             self._turn_index = index
 
     async def push(self, text: str, turn_index: int) -> None:
         """Add a text segment to the pending buffer."""
         if turn_index != self._turn_index:
-            self._flush()
+            await self._flush()
             self._turn_index = turn_index
 
         self._pending.append(text)
