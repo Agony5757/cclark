@@ -1,0 +1,93 @@
+"""Per-channel streaming state for the VerboseCardStreamer.
+
+Stores one VerboseChannelState per channel, tracking:
+- The active streaming card (message_id)
+- Pending uncommitted text segments
+- Last flush timestamp
+- Per-window last-seen turn index (for dedup)
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class VerboseTurnState:
+    """Streaming state for a single agent turn within a channel."""
+
+    last_turn_index: int = -1
+    """Highest turn_index this user has already seen."""
+    pending_text: str = ""
+    """Text accumulated since the last flush."""
+
+
+@dataclass
+class VerboseChannelState:
+    """Per-channel streaming state — one per feishu channel."""
+
+    streaming_card_id: str | None = None
+    """Feishu message_id of the streaming card for the current turn."""
+    last_flush_ms: float = 0
+    """Monotonic timestamp (ms) of the last flush."""
+    turn_states: dict[str, VerboseTurnState] = field(default_factory=dict)
+    """Per-user-id or per-window-id turn state. Key is user_id."""
+
+    def turn_state(self, user_id: str) -> VerboseTurnState:
+        return self.turn_states.setdefault(user_id, VerboseTurnState())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "streaming_card_id": self.streaming_card_id,
+            "last_flush_ms": self.last_flush_ms,
+            "turn_states": {
+                uid: {
+                    "last_turn_index": ts.last_turn_index,
+                    "pending_text": ts.pending_text,
+                }
+                for uid, ts in self.turn_states.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> VerboseChannelState:
+        state = cls(
+            streaming_card_id=data.get("streaming_card_id"),
+            last_flush_ms=data.get("last_flush_ms", 0),
+        )
+        for uid, ts_data in data.get("turn_states", {}).items():
+            state.turn_states[uid] = VerboseTurnState(
+                last_turn_index=ts_data.get("last_turn_index", -1),
+                pending_text=ts_data.get("pending_text", ""),
+            )
+        return state
+
+
+@dataclass
+class ToolbarState:
+    """State tracked per channel for toolbar card management."""
+
+    toolbar_card_id: str | None = None
+    """Feishu message_id of the currently displayed toolbar card."""
+    toolbar_window_id: str | None = None
+    """Window ID the toolbar is attached to (for stale detection)."""
+
+
+# Global registry: channel_id → VerboseChannelState
+_verbose_states: dict[str, VerboseChannelState] = {}
+_toolbar_states: dict[str, ToolbarState] = {}
+
+
+def get_verbose_state(channel_id: str) -> VerboseChannelState:
+    return _verbose_states.setdefault(channel_id, VerboseChannelState())
+
+
+def get_toolbar_state(channel_id: str) -> ToolbarState:
+    return _toolbar_states.setdefault(channel_id, ToolbarState())
+
+
+def reset_channel_state(channel_id: str) -> None:
+    """Clear all cached state for a channel. Used after unbind."""
+    _verbose_states.pop(channel_id, None)
+    _toolbar_states.pop(channel_id, None)

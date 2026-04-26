@@ -1,0 +1,77 @@
+[project]
+name = "cclark"
+version = "0.1.0"
+description = "Feishu bot frontend for unified-icc gateway"
+readme = "README.md"
+authors = [
+    { name = "Agony5757", email = "chenzhaoyun94@gmail.com" },
+]
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+    "unified-icc @ file:///home/agony/projects/unified-icc",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "httpx>=0.27.0",
+    "structlog>=24.0.0",
+    "python-dotenv>=1.0.0",
+    "libtmux>=0.50.0",
+    "Pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0",
+    "pytest-timeout>=2.3",
+    "ruff>=0.8.0",
+    "pyright>=1.1.0",
+]
+docs = [
+    "sphinx>=7.0",
+    "sphinx-book-theme>=1.0",
+    "myst-parser>=3.0",
+    "sphinx-autodoc-typehints>=2.0",
+]
+
+[project.scripts]
+cclark = "cclark.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cclark"]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "ARG", "G", "BLE", "SIM", "PLR2004", "C901", "PLR0911", "PLR0912", "PLR0915", "N"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-returns = 8
+max-branches = 15
+max-statements = 60
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ARG", "PLR2004"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+timeout = 30
