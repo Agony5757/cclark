@@ -9,7 +9,7 @@ authors = [
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
-    "unified-icc @ git+https://github.com/Agony5757/unified-icc",
+    "unified-icc @ file:///home/agony/projects/unified-icc",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.29.0",
     "httpx>=0.27.0",

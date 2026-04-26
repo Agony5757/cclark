@@ -17,8 +17,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set UV_GIT_AUTH with GITHUB_TOKEN
-        run: echo "UV_GIT_AUTH=https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com" >> $GITHUB_ENV
+      - name: Checkout unified-icc as sibling directory
+        uses: actions/checkout@v4
+        with:
+          repository: Agony5757/unified-icc
+          path: unified-icc
+
+      - name: Point unified-icc dep to sibling directory
+        run: sed -i 's|file:///home/agony/projects/unified-icc|../unified-icc|g' pyproject.toml
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -44,8 +50,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set UV_GIT_AUTH with GITHUB_TOKEN
-        run: echo "UV_GIT_AUTH=https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com" >> $GITHUB_ENV
+      - name: Checkout unified-icc as sibling directory
+        uses: actions/checkout@v4
+        with:
+          repository: Agony5757/unified-icc
+          path: unified-icc
+
+      - name: Point unified-icc dep to sibling directory
+        run: sed -i 's|file:///home/agony/projects/unified-icc|../unified-icc|g' pyproject.toml
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
