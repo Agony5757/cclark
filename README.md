@@ -1,5 +1,7 @@
 # CCLark
 
+[![CI](https://github.com/Agony5757/cclark/actions/workflows/ci.yml/badge.svg)](https://github.com/Agony5757/cclark/actions)
+
 **在飞书群聊和话题中控制 AI 编程助手。**
 
 CCLark 是 [unified-icc](https://github.com/Agony5757/unified-icc) 的飞书前端。它作为常驻服务运行，接收飞书消息、转发给 unified-icc 网关（驱动一个 tmux 会话），并将智能体输出以飞书交互卡片的形式流式推送回来。
