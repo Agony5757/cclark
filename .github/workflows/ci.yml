@@ -17,14 +17,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Checkout unified-icc as sibling directory
+      - name: Checkout unified-icc
         uses: actions/checkout@v4
         with:
           repository: Agony5757/unified-icc
           path: unified-icc
 
-      - name: Point unified-icc dep to sibling directory
-        run: sed -i 's|file:///home/agony/projects/unified-icc|../unified-icc|g' pyproject.toml
+      - name: Replace unified-icc path in lock file
+        run: |
+          # unified-icc is at /home/runner/work/Agony5757/unified-icc in CI
+          sed -i 's|/home/agony/projects/unified-icc|/home/runner/work/Agony5757/unified-icc|g' uv.lock
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -34,8 +36,14 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Install dependencies
-        run: uv sync --all-extras
+      - name: Install unified-icc
+        run: uv pip install -e /home/runner/work/Agony5757/unified-icc
+
+      - name: Install remaining dependencies
+        run: uv sync --no-install-project --no-install-extras
+
+      - name: Install dev dependencies
+        run: uv sync --extra dev
 
       - name: Run tests
         run: uv run pytest tests/ -v --tb=short
@@ -50,14 +58,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Checkout unified-icc as sibling directory
+      - name: Checkout unified-icc
         uses: actions/checkout@v4
         with:
           repository: Agony5757/unified-icc
           path: unified-icc
 
-      - name: Point unified-icc dep to sibling directory
-        run: sed -i 's|file:///home/agony/projects/unified-icc|../unified-icc|g' pyproject.toml
+      - name: Replace unified-icc path in lock file
+        run: |
+          sed -i 's|/home/agony/projects/unified-icc|/home/runner/work/Agony5757/unified-icc|g' uv.lock
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -67,8 +76,14 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Install dependencies
-        run: uv sync --all-extras
+      - name: Install unified-icc
+        run: uv pip install -e /home/runner/work/Agony5757/unified-icc
+
+      - name: Install remaining dependencies
+        run: uv sync --no-install-project --no-install-extras
+
+      - name: Install dev dependencies
+        run: uv sync --extra dev
 
       - name: Run pyright
         run: uv run pyright src/
