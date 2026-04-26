@@ -42,6 +42,8 @@ class FeishuCardBuilder:
     @staticmethod
     def _md(text: str) -> str:
         """Basic markdown-to-Feishu markdown-lite converter."""
+        # Escape first so inserted HTML tags are not themselves escaped
+        text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         # Bold
         text = text.replace("**", "<bold>", 1)
         idx = text.find("**", text.find("<bold>") + 6)
@@ -56,10 +58,7 @@ class FeishuCardBuilder:
                 out.append(f"<code>{part}</code>")
             else:
                 out.append(part)
-        text = "".join(out)
-        # Escape angle brackets
-        text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        return text
+        return "".join(out)
 
     @staticmethod
     def _truncate_code(text: str) -> str:

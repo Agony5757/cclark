@@ -73,5 +73,3 @@ pythonVersion = "3.12"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "auto"
-timeout = 30
