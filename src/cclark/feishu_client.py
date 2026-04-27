@@ -30,7 +30,7 @@ class FeishuClient:
         self._app_secret = app_secret
         self._tenant_access_token: str | None = None
         self._token_expires_at: float = 0
-        self._http = httpx.AsyncClient(timeout=30.0)
+        self._http = httpx.AsyncClient(timeout=30.0, trust_env=False)
 
     async def close(self) -> None:
         await self._http.aclose()

@@ -1,4 +1,4 @@
-"""cclark CLI entry point — run the Feishu bot with unified-icc gateway."""
+"""cclark CLI entry point — run the Feishu bot via WebSocket long connection."""
 
 from __future__ import annotations
 
@@ -13,10 +13,15 @@ from unified_icc import UnifiedICC
 
 from cclark.adapter import FeishuAdapter
 from cclark.callback_registry import dispatch as dispatch_callback
-from cclark.config import config as app_config
+from cclark.config import config
 from cclark.feishu_client import FeishuClient
 from cclark.handlers.message import handle_message, set_handlers
-from cclark.webhook import create_app, register_callback_handler, register_message_handler
+from cclark.webhook import app as health_app
+from cclark.ws_client import (
+    FeishuWSClient,
+    register_callback_handler,
+    register_message_handler,
+)
 
 logger = structlog.get_logger()
 
@@ -35,7 +40,7 @@ def _build_adapter(client: FeishuClient) -> FeishuAdapter:
 
 async def _register_callbacks(gateway: UnifiedICC, adapter: FeishuAdapter) -> None:  # noqa: C901
     """Register gateway event callbacks to forward agent output to Feishu."""
-    # Message callbacks — forward agent output to the channel
+
     async def on_message(event) -> None:
         try:
             channel_ids = getattr(gateway, "channel_router").resolve_channels(event.window_id)
@@ -76,43 +81,46 @@ async def _register_callbacks(gateway: UnifiedICC, adapter: FeishuAdapter) -> No
     gateway.on_hook_event(on_hook)
 
 
-async def _callback_handler(ctx) -> None:
-    """Route a Feishu card callback to the handler system."""
-    await dispatch_callback(ctx)
-
-
-async def _message_handler(event) -> None:
-    """Route a Feishu message event to the message handler."""
-    await handle_message(event)
-
-
 async def _main() -> None:
-    """Start the cclark bot."""
-    client = FeishuClient(app_config.feishu_app_id, app_config.feishu_app_secret)
+    """Start the cclark bot (WebSocket mode)."""
+    client = FeishuClient(config.feishu_app_id, config.feishu_app_secret)
     adapter = _build_adapter(client)
 
     gateway = await _build_gateway()
     await _register_callbacks(gateway, adapter)
 
     set_handlers(gateway, adapter)
-    register_message_handler(_message_handler)
-    register_callback_handler(_callback_handler)
+
+    # Wire WS client → handler system
+    register_message_handler(handle_message)
+    register_callback_handler(dispatch_callback)
 
     # Import handlers to trigger @register decorators
     from cclark.handlers import callback, message, screenshot, session_creation, toolbar  # noqa: F401
 
-    app = create_app(client)
+    # Start WebSocket client (blocks until stopped)
+    ws_client = FeishuWSClient(
+        app_id=config.feishu_app_id,
+        app_secret=config.feishu_app_secret,
+    )
+    ws_task = asyncio.create_task(ws_client.start())
 
+    # Also serve health endpoint
     uvicorn_config = uvicorn.Config(
-        app,
+        health_app,
         host="0.0.0.0",
-        port=app_config.webhook_port,
+        port=config.webhook_port,
         log_level="info",
     )
     server = uvicorn.Server(uvicorn_config)
+    server_task = asyncio.create_task(server.serve())
 
     async def shutdown() -> None:
         logger.info("Shutting down...")
+        await ws_client.stop()
+        ws_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await ws_task
         await gateway.stop()
         await client.close()
 
@@ -121,8 +129,10 @@ async def _main() -> None:
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown()))
 
-    logger.info("cclark starting on port %d", app_config.webhook_port)
-    await server.serve()
+    logger.info("cclark starting (WebSocket mode) on port %d", config.webhook_port)
+
+    # Run both the WebSocket client and the health server concurrently
+    await asyncio.gather(server_task, ws_task)
 
 
 def main() -> None:

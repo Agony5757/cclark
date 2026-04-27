@@ -47,8 +47,6 @@ class TestRegister:
         assert _registry["db:sel:"] is handle
 
     def test_register_multiple_prefixes(self) -> None:
-        handler = AsyncMock()
-
         @register("prov:claude", "prov:codex", "prov:gemini")
         async def handle(_: CallbackContext) -> None:
             pass

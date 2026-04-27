@@ -40,14 +40,14 @@ def mock_config(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     mock_cfg.bot_user_id = "ou_bot"
     mock_cfg.default_provider = "claude"
     mock_cfg.toolbar_config_path = ""
+    # Real methods needed by callback_registry and ws_client
+    mock_cfg.is_user_allowed = lambda uid: uid in {"ou_testuser1", "ou_testuser2"}
+    mock_cfg.parse_channel_id = lambda cid, tid="": f"feishu:{cid}:{tid}" if tid else f"feishu:{cid}"
+    mock_cfg.split_channel_id = lambda cid: (cid.split(":")[1], cid.split(":")[2]) if cid.startswith("feishu:") else (cid, "")
 
     # Patch the module object in sys.modules so all import paths see the mock
     mock_module = ModuleType("cclark.config")
     mock_module.config = mock_cfg
     monkeypatch.setitem(sys.modules, "cclark.config", mock_module)
-
-    # Also patch direct imports — modules that did `from cclark.config import config`
-    # hold a reference that sys.modules patching won't fix
-    monkeypatch.setattr("cclark.webhook.config", mock_cfg)
 
     return mock_cfg

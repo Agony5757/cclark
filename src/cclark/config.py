@@ -50,12 +50,14 @@ class FeishuConfig:
         self.webhook_path = _env("CCLARK_WEBHOOK_PATH", "/webhook/event")
 
         # Authorization
-        allowed_users_str = _env("ALLOWED_USERS", "")
-        if not allowed_users_str:
-            raise ValueError("ALLOWED_USERS environment variable is required")
-        self.allowed_users: set[str] = {
-            uid.strip() for uid in allowed_users_str.split(",") if uid.strip()
-        }
+        # "all" (or empty) means allow everyone; otherwise a comma-separated list of open_ids
+        allowed_users_str = _env("ALLOWED_USERS", "").strip().lower()
+        if allowed_users_str in ("", "all"):
+            self.allowed_users: set[str] | None = None  # None = allow all
+        else:
+            self.allowed_users = {
+                uid.strip() for uid in allowed_users_str.split(",") if uid.strip()
+            }
 
         # Bot user ID (to skip own messages)
         self.bot_user_id: str = _env("FEISHU_BOT_USER_ID", "")
@@ -71,16 +73,23 @@ class FeishuConfig:
         else:
             self.toolbar_config_path = toolbar_path
 
+        allowed_label = "all" if self.allowed_users is None else f"{len(self.allowed_users)} users"
         logger.debug(
-            "FeishuConfig initialized: app_id=%s..., allowed_users=%d, "
+            "FeishuConfig initialized: app_id=%s..., allowed_users=%s, "
             "provider=%s",
             self.feishu_app_id[:8],
-            len(self.allowed_users),
+            allowed_label,
             self.default_provider,
         )
 
     def is_user_allowed(self, user_id: str) -> bool:
-        """Check if a Feishu user is in the allowed list."""
+        """Check if a Feishu user is in the allowed list.
+
+        Returns True if allowed_users is None (no restriction) or
+        if user_id is in the explicit allow list.
+        """
+        if self.allowed_users is None:
+            return True
         return user_id in self.allowed_users
 
     def parse_channel_id(self, chat_id: str, thread_id: str = "") -> str:

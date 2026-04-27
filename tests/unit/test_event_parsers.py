@@ -1,6 +1,5 @@
 """Tests for event_parsers: Feishu webhook payload → typed event objects."""
 
-import pytest
 
 from cclark.event_parsers import (
     FeishuCallbackEvent,
