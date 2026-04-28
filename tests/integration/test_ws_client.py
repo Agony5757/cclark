@@ -11,6 +11,9 @@ from httpx import ASGITransport, AsyncClient
 
 from cclark.webhook import app as health_app
 from cclark.ws_client import (
+    _save_seen_state,
+    _seen_events,
+    _seen_messages,
     decode_frame,
     encode_frame,
     register_message_handler,
@@ -25,6 +28,14 @@ async def http_client() -> AsyncClient:
     transport = ASGITransport(app=health_app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+@pytest.fixture(autouse=True)
+def _clear_dedup_state() -> None:
+    """Reset in-memory dedup state so tests don't interfere with each other."""
+    _seen_events.clear()
+    _seen_messages.clear()
+    _save_seen_state()
 
 
 @pytest.mark.asyncio

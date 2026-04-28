@@ -128,7 +128,7 @@ Real-time output with in-place updates:
 
 ### 3.1 Mode Toggle
 
-The `/verbose` command toggles verbose mode per-channel:
+The `#verbose on|off` command toggles verbose mode per-channel:
 
 ```python
 class VerboseState:

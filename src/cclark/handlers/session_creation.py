@@ -82,7 +82,7 @@ def _format_dir_listing(path: str, user_id: str) -> str:
     if mru:
         lines.append("⭐ Recent:")
         for d in mru[:5]:
-            lines.append(f"  /select {d}")
+            lines.append(f"  #select {d}")
         lines.append("")
 
     if dirs:
@@ -94,7 +94,7 @@ def _format_dir_listing(path: str, user_id: str) -> str:
         lines.append("  (empty)")
 
     lines.append("")
-    lines.append("Commands: <name/number> enter dir | .. go up | ok confirm | /select <path>")
+    lines.append("Commands: <name/number> enter dir | .. go up | ok confirm | #select <path>")
     return "\n".join(lines)
 
 
@@ -105,18 +105,29 @@ async def start_session_creation(
     event: FeishuMessageEvent, channel_id: str
 ) -> None:
     """Begin the text-based session creation flow."""
-    from cclark.handlers.message import _adapter
+    from cclark.handlers.message import _adapter, _gateway
 
     if _adapter is None:
         return
 
+    # Deduplication: refuse to create a new session if one is already bound to this channel.
+    if _gateway is not None:
+        existing = _gateway.channel_router.resolve_window(channel_id)
+        if existing is not None:
+            await _adapter.send_text(
+                channel_id,
+                f"A session is already running for this chat (window {existing}).\n"
+                "Use #new to kill it first.",
+            )
+            return
+
     state = _get_or_create_state(event.user_id, channel_id)
     state["original_text"] = event.text
 
-    # Handle /select <path> — jump directly to the specified directory
+    # Handle #select <path> — jump directly to the specified directory
     text = event.text.strip()
-    if text.startswith("/select "):
-        target = text[len("/select "):].strip()
+    if text.startswith("#select "):
+        target = text[len("#select "):].strip()
         target = os.path.expanduser(target)
         if os.path.isdir(target):
             state["path"] = os.path.abspath(target)
@@ -170,9 +181,9 @@ async def _handle_browse(  # noqa: C901,PLR0912,PLR0915
     current_path = state["path"]
     new_path: str | None = None
 
-    # /select <path> — direct navigation
-    if text.startswith("/select "):
-        target = text[len("/select "):].strip()
+    # #select <path> — direct navigation
+    if text.startswith("#select "):
+        target = text[len("#select "):].strip()
         target = os.path.expanduser(target)
         if os.path.isdir(target):
             new_path = os.path.abspath(target)
@@ -202,7 +213,7 @@ async def _handle_browse(  # noqa: C901,PLR0912,PLR0915
             return True
 
     # cancel
-    elif text.lower() in ("cancel", "quit", "exit", "/cancel"):
+    elif text.lower() in ("cancel", "quit", "exit", "#cancel"):
         _clear_state(event.user_id)
         await _adapter.send_text(channel_id, "Session creation cancelled.")
         return True
@@ -259,7 +270,7 @@ async def _handle_provider(
         return False
 
     # cancel
-    if text.lower() in ("cancel", "quit", "exit", "/cancel", "back"):
+    if text.lower() in ("cancel", "quit", "exit", "#cancel", "back"):
         state["phase"] = STATE_BROWSE
         await _adapter.send_text(
             channel_id,
@@ -317,7 +328,7 @@ async def _handle_mode(
         return False
 
     # cancel / back
-    if text.lower() in ("cancel", "quit", "exit", "/cancel"):
+    if text.lower() in ("cancel", "quit", "exit", "#cancel"):
         _clear_state(event.user_id)
         await _adapter.send_text(channel_id, "Session creation cancelled.")
         return True
@@ -401,6 +412,16 @@ async def _create_window(
     # Mark as created so the fallback scan won't link unrelated sessions to this window
     window_store.mark_window_created(window_id)
 
+    # Actively query session_id via /status — this runs right after the window is
+    # created so the session_id is available immediately for routing and tracking.
+    from unified_icc.session_monitor import get_active_monitor
+    monitor = get_active_monitor()
+    if monitor is not None:
+        session_id = await monitor.detect_session_id(window_id)
+        if session_id:
+            ws.session_id = session_id
+            window_store._schedule_save()
+
     logger.info(
         "Window created: id=%s provider=%s mode=%s path=%s",
         window_id, provider, approval_mode, path,
@@ -417,7 +438,7 @@ async def _create_window(
     # Forward the message that triggered session creation
     if pending_text and str(pending_text).strip():
         text = str(pending_text).strip()
-        for prefix in ("/new", "/start"):
+        for prefix in ("#new", "#start", "/new", "/start"):
             if text.startswith(prefix):
                 text = text[len(prefix):].strip()
         if text:

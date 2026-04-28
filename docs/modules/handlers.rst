@@ -32,23 +32,22 @@ handlers/message.py — 入站文本
 斜杠命令
 ~~~~~~~~~~~~~~~
 
-``/new``、``/start``
+所有 ``/xxx`` 命令转发给 agent；``#`` 前缀为 cclark 专用命令：
+
+``#new``、``#start``
     为新会话启动目录浏览器
 
-``/sessions``
-    通过状态卡片列出活跃窗口
+``#session-list``
+    列出活跃窗口
 
-``/help``
+``#help``
     发送帮助文本
 
-``/verbose``
+``#verbose on|off``
     切换详细流式模式
 
-``/screenshot``
+``#screenshot``
     捕获并发送截图
-
-``/toolbar``
-    为活跃会话显示工具栏卡片
 
 handlers/callback.py — 回调分发器
 -----------------------------------------
@@ -82,7 +81,7 @@ handlers/session_creation.py — 新建会话流程
        "page": 0,                     # 分页索引
        "channel_id": "feishu:chat:thread",
        "provider": "claude",           # 选中的提供方
-       "original_text": "/new",        # 触发消息文本
+       "original_text": "#new",        # 触发消息文本
    }
 
 第 1 步 — 目录浏览器

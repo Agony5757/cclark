@@ -33,6 +33,10 @@ class VerboseChannelState:
     """Monotonic timestamp (ms) of the last flush."""
     turn_states: dict[str, VerboseTurnState] = field(default_factory=dict)
     """Per-user-id or per-window-id turn state. Key is user_id."""
+    streaming_thinking_card_id: str | None = None
+    """Feishu message_id of the in-progress thinking card."""
+    _verbose_enabled: bool = False
+    """Per-channel verbose mode. Defaults to False (thinking hidden)."""
 
     def turn_state(self, user_id: str) -> VerboseTurnState:
         return self.turn_states.setdefault(user_id, VerboseTurnState())
@@ -48,6 +52,8 @@ class VerboseChannelState:
                 }
                 for uid, ts in self.turn_states.items()
             },
+            "streaming_thinking_card_id": self.streaming_thinking_card_id,
+            "_verbose_enabled": self._verbose_enabled,
         }
 
     @classmethod
@@ -55,6 +61,8 @@ class VerboseChannelState:
         state = cls(
             streaming_card_id=data.get("streaming_card_id"),
             last_flush_ms=data.get("last_flush_ms", 0),
+            streaming_thinking_card_id=data.get("streaming_thinking_card_id"),
+            _verbose_enabled=data.get("_verbose_enabled", False),
         )
         for uid, ts_data in data.get("turn_states", {}).items():
             state.turn_states[uid] = VerboseTurnState(
@@ -90,4 +98,15 @@ def get_toolbar_state(channel_id: str) -> ToolbarState:
 def reset_channel_state(channel_id: str) -> None:
     """Clear all cached state for a channel. Used after unbind."""
     _verbose_states.pop(channel_id, None)
+    _toolbar_states.pop(channel_id, None)
+
+
+def reset_channel_state_keep_verbose(channel_id: str) -> None:
+    """Reset toolbar and streaming card state but keep _verbose_enabled."""
+    vs = _verbose_states.get(channel_id)
+    if vs is not None:
+        vs.streaming_card_id = None
+        vs.streaming_thinking_card_id = None
+        vs.last_flush_ms = 0
+        vs.turn_states.clear()
     _toolbar_states.pop(channel_id, None)

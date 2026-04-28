@@ -40,6 +40,7 @@ _feishu_clients: dict[str, FeishuClient] = {}
 
 # ── App context for handlers ────────────────────────────────────────────────
 
+
 def get_adapter_for_channel(channel_id: str) -> FeishuAdapter | None:
     """Look up the right FeishuAdapter for a channel_id (multi-app routing)."""
     if _app_adapters:
@@ -52,20 +53,90 @@ def get_adapter_for_channel(channel_id: str) -> FeishuAdapter | None:
 
 # ── Gateway callbacks ────────────────────────────────────────────────────────
 
+
+STX = "\x02"
+_EXP_START = "\x02EXPQUOTE_START\x02"
+_EXP_END = "\x02EXPQUOTE_END\x02"
+
+
+def _clean_text(raw: str) -> str:
+    """Strip all STX chars and EXPQUOTE markers from raw text."""
+    return raw.replace(_EXP_START, "").replace(_EXP_END, "").replace(STX, "")
+
+
+def _split_messages(messages: list[Any]) -> tuple[list[Any], list[Any]]:
+    """Split messages into thinking vs non-thinking lists."""
+    thinking, regular = [], []
+    for m in messages:
+        ct = getattr(m, "content_type", "text") or "text"
+        if ct == "thinking":
+            thinking.append(m)
+        else:
+            regular.append(m)
+    return thinking, regular
+
+
+async def _send_regular_text(adapter, channel_id: str, regular_msgs: list[Any]) -> None:
+    """Send non-thinking messages as plain text."""
+    combined = "\n".join(
+        _clean_text(getattr(m, "text", "") or "")
+        for m in regular_msgs
+        if getattr(m, "text", "")
+    )
+    if combined:
+        try:
+            await adapter.send_text(channel_id, combined)
+        except Exception:
+            logger.exception("send_text failed channel=%s", channel_id)
+
+
+async def _handle_thinking(adapter, channel_id: str, thinking_msgs: list[Any], verbose_on: bool) -> None:
+    """Handle thinking messages for a channel.
+
+    - verbose_on=True:  显示实际 thinking 内容（ThinkingCardStreamer，灰色卡片）
+    - verbose_on=False: 显示占位符 🤔 Thinking... → 🤔 Thinking...OK!
+                        （同样是灰色卡片，但丢弃实际内容）
+    """
+    if not thinking_msgs:
+        return
+    from cclark.cards.thinking import ThinkingCardStreamer
+
+    streamer = ThinkingCardStreamer(adapter, channel_id, placeholder_only=not verbose_on)
+    for m in thinking_msgs:
+        text = _clean_text(getattr(m, "text", "") or "")
+        is_complete = getattr(m, "is_complete", True)
+        try:
+            await streamer.push_thinking(text, is_complete=is_complete)
+        except Exception:
+            logger.exception("ThinkingCardStreamer failed channel=%s", channel_id)
+
+
+async def _dispatch_channel_messages(
+    channel_id: str,
+    messages: list[Any],
+    _session_id: str,
+    _gateway: UnifiedICC,
+) -> None:
+    """Dispatch messages to one channel, respecting verbose mode and content types."""
+    adapter = get_adapter_for_channel(channel_id)
+    if adapter is None:
+        logger.warning("No adapter for channel %s", channel_id)
+        return
+
+    from cclark.state import get_verbose_state
+
+    verbose_on = getattr(get_verbose_state(channel_id), "_verbose_enabled", False)
+    thinking_msgs, regular_msgs = _split_messages(messages)
+
+    await _send_regular_text(adapter, channel_id, regular_msgs)
+    await _handle_thinking(adapter, channel_id, thinking_msgs, verbose_on)
+
+
 async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR0915
     """Register gateway event callbacks to forward agent output to Feishu."""
 
     async def on_message(event: Any) -> None:  # noqa: C901
         try:
-            texts = [
-                getattr(m, "text", "")
-                for m in getattr(event, "messages", [])
-                if getattr(m, "text", "")
-            ]
-            combined_text = "\n".join(texts)
-            if not combined_text:
-                return
-
             # Resolve channel_ids
             channel_ids: list[str] = list(getattr(event, "channel_ids", []) or [])
             if not channel_ids:
@@ -87,23 +158,18 @@ async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR091
             if not channel_ids:
                 return
 
+            messages: list = getattr(event, "messages", [])
             session_id = getattr(event, "session_id", "")
+
             logger.info(
-                "on_message: session=%s text_len=%d → channels=%s",
+                "on_message: session=%s msg_count=%d channels=%s",
                 session_id,
-                len(combined_text),
+                len(messages),
                 channel_ids,
             )
 
             for channel_id in channel_ids:
-                adapter = get_adapter_for_channel(channel_id)
-                if adapter is None:
-                    logger.warning("No adapter for channel %s", channel_id)
-                    continue
-                try:
-                    await adapter.send_text(channel_id, combined_text)
-                except Exception:
-                    logger.exception("send_text failed for channel %s", channel_id)
+                await _dispatch_channel_messages(channel_id, messages, session_id, gateway)
 
         except Exception:  # noqa: BLE001
             logger.exception("on_message handler failed")
@@ -149,7 +215,8 @@ async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR091
                     continue
                 try:
                     await adapter.send_text(
-                        channel_id, f"[hook] {getattr(event, 'hook_name', '')}: {getattr(event, 'message', '')}"
+                        channel_id,
+                        f"[hook] {getattr(event, 'hook_name', '')}: {getattr(event, 'message', '')}",
                     )
                 except Exception:
                     logger.exception("on_hook failed for channel %s", channel_id)

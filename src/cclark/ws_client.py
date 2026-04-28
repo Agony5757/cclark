@@ -536,7 +536,37 @@ class FeishuWSClient:
             logger.warning("WS event payload not JSON: %r", payload[:100])
             return
 
-        # Deduplicate by event_id (Feishu may re-deliver)
+        # Parse sender info (needed for self-filter below)
+        sender = data.get("event", {}).get("sender", {})
+        sender_type = sender.get("sender_type", "")
+        sender_id = sender.get("sender_id", {}).get("open_id", "")
+        sender_app_id = sender.get("id", "")
+
+        # Self-reply filter: skip messages sent by THIS bot.
+        # When the bot sends via FeishuAdapter.send_text(), Feishu delivers the
+        # message back as a new im.message.receive_v1 event. Without this filter
+        # the bot would process its own output and create a feedback loop.
+        #
+        # Check both sender_type and sender_app_id:
+        # - sender_type=="app" catches standard bot-sent messages
+        # - sender_app_id==self._app_id catches edge cases where sender_type is
+        #   missing or empty (e.g. card messages, schema variants)
+        is_own_message = (
+            sender_type == "app" or sender_app_id == self._app_id
+        )
+        if is_own_message:
+            logger.debug(
+                "WS: skipping own message sender_type=%s sender_app_id=%s",
+                sender_type, sender_app_id,
+            )
+            return
+
+        logger.info(
+            "WS recv event: sender_type=%s open_id=%s app_id=%s",
+            sender_type, sender_id, sender_app_id,
+        )
+
+        # Deduplicate by event_id (Feishu may re-deliver after reconnect)
         event_id = data.get("header", {}).get("event_id", "")
         if event_id:
             if event_id in _seen_events:
@@ -556,9 +586,6 @@ class FeishuWSClient:
         if event.message_id:
             _seen_messages.add(event.message_id)
             _save_seen_state()
-
-        if event.user_id == config.bot_user_id:
-            return
 
         # Multi-app auth check
         if config.is_multi_app:
