@@ -131,7 +131,7 @@ async def handle_session_input(
     event: FeishuMessageEvent, channel_id: str
 ) -> bool:
     """Handle text input during session creation. Returns True if consumed."""
-    from cclark.handlers.message import _adapter, _gateway
+    from cclark.handlers.message import _adapter
 
     if _adapter is None:
         return False
@@ -156,7 +156,7 @@ async def handle_session_input(
 # ── Phase handlers ───────────────────────────────────────────────────────────
 
 
-async def _handle_browse(
+async def _handle_browse(  # noqa: C901,PLR0912,PLR0915
     event: FeishuMessageEvent,
     channel_id: str,
     text: str,

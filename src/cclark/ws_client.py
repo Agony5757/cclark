@@ -15,7 +15,7 @@ import random
 import structlog
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import websockets
 
@@ -28,6 +28,7 @@ logger = structlog.get_logger()
 
 _WS_ENDPOINT_URI = "/callback/ws/endpoint"
 _BASE_URL = "https://open.feishu.cn"
+_MAX_SEEN = 1000
 
 # Frame method (protobuf field 4, wire varint)
 _METHOD_CONTROL = 0
@@ -443,7 +444,7 @@ class FeishuWSClient:
             return _TYPE_EVENT
         return ""
 
-    async def _dispatch_event(self, payload: bytes) -> None:
+    async def _dispatch_event(self, payload: bytes) -> None:  # noqa: C901
         """Parse and dispatch an inbound message event."""
         if _message_handler is None:
             return
@@ -460,7 +461,7 @@ class FeishuWSClient:
                 logger.debug("WS duplicate event skipped: %s", event_id)
                 return
             _seen_events.add(event_id)
-            if len(_seen_events) > 1000:
+            if len(_seen_events) > _MAX_SEEN:
                 _seen_events.clear()
 
         event = parse_message_event(data)
@@ -473,7 +474,7 @@ class FeishuWSClient:
             return
         if event.message_id:
             _seen_messages.add(event.message_id)
-            if len(_seen_messages) > 1000:
+            if len(_seen_messages) > _MAX_SEEN:
                 _seen_messages.clear()
 
         if event.user_id == config.bot_user_id:

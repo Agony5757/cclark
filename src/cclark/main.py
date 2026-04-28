@@ -52,10 +52,10 @@ def get_adapter_for_channel(channel_id: str) -> FeishuAdapter | None:
 
 # ── Gateway callbacks ────────────────────────────────────────────────────────
 
-async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901
+async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR0915
     """Register gateway event callbacks to forward agent output to Feishu."""
 
-    async def on_message(event: Any) -> None:
+    async def on_message(event: Any) -> None:  # noqa: C901
         try:
             texts = [
                 getattr(m, "text", "")

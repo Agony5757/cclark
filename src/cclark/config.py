@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import os
 import structlog
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -190,10 +190,7 @@ class FeishuConfig:
         In multi-app mode: includes app name to distinguish channels
         across apps. In single-app mode: plain feishu:chat_id[:thread_id].
         """
-        if thread_id:
-            suffix = f":{thread_id}"
-        else:
-            suffix = ""
+        suffix = f":{thread_id}" if thread_id else ""
         if self.is_multi_app:
             return f"feishu:{self._default_app.name}:{chat_id}{suffix}"
         return f"feishu:{chat_id}{suffix}"
@@ -205,16 +202,17 @@ class FeishuConfig:
         Multi-app:   feishu:app_name:chat_id[:thread_id]
         """
         parts = channel_id.split(":")
-        if len(parts) == 2:  # feishu:chat_id
+        n2, n3, n4 = 2, 3, 4
+        if len(parts) == n2:  # feishu:chat_id
             return parts[1], ""
-        if len(parts) == 3:  # feishu:chat_id:thread_id OR feishu:app:chat (if app has no _)
+        if len(parts) == n3:  # feishu:chat_id:thread_id OR feishu:app:chat (if app has no _)
             # Heuristic: if the middle part looks like a Feishu ID (oc_xxx or ou_xxx),
             # treat as single-app. Otherwise multi-app.
             if parts[1].startswith("oc_") or parts[1].startswith("ou_"):
                 return parts[1], parts[2]
             # Multi-app: feishu:app_name:chat_id
             return f"{parts[1]}:{parts[2]}", ""
-        if len(parts) == 4:  # feishu:app_name:chat_id:thread_id
+        if len(parts) == n4:  # feishu:app_name:chat_id:thread_id
             return f"{parts[1]}:{parts[2]}", parts[3]
         raise ValueError(f"Invalid channel_id format: {channel_id!r}")
 
@@ -223,7 +221,8 @@ class FeishuConfig:
         if not self.is_multi_app:
             return "default"
         parts = channel_id.split(":")
-        if len(parts) == 4 and parts[0] == "feishu":
+        n4 = 4
+        if len(parts) == n4 and parts[0] == "feishu":
             return parts[1]
         return "default"
 
