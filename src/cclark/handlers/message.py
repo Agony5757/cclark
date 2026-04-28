@@ -48,6 +48,9 @@ async def handle_message(event: FeishuMessageEvent) -> None:
 
     # Forward text to the agent window
     try:
+        from cclark.state import advance_turn_index
+
+        advance_turn_index(channel_id)
         await _gateway.send_to_window(window_id, text)
     except Exception:
         logger.exception("Failed to send to window %s", window_id)

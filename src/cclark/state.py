@@ -85,6 +85,7 @@ class ToolbarState:
 # Global registry: channel_id → VerboseChannelState
 _verbose_states: dict[str, VerboseChannelState] = {}
 _toolbar_states: dict[str, ToolbarState] = {}
+_CHANNEL_TURN_KEY = "__channel_turn__"
 
 
 def get_verbose_state(channel_id: str) -> VerboseChannelState:
@@ -93,6 +94,19 @@ def get_verbose_state(channel_id: str) -> VerboseChannelState:
 
 def get_toolbar_state(channel_id: str) -> ToolbarState:
     return _toolbar_states.setdefault(channel_id, ToolbarState())
+
+
+def get_current_turn_index(channel_id: str) -> int:
+    """Return the current channel-level turn index."""
+    ts = get_verbose_state(channel_id).turn_state(_CHANNEL_TURN_KEY)
+    return max(ts.last_turn_index, 0)
+
+
+def advance_turn_index(channel_id: str) -> int:
+    """Advance and return the next channel-level turn index."""
+    ts = get_verbose_state(channel_id).turn_state(_CHANNEL_TURN_KEY)
+    ts.last_turn_index += 1
+    return ts.last_turn_index
 
 
 def reset_channel_state(channel_id: str) -> None:

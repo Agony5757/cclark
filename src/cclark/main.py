@@ -64,14 +64,22 @@ def _clean_text(raw: str) -> str:
     return raw.replace(_EXP_START, "").replace(_EXP_END, "").replace(STX, "")
 
 
+def _looks_like_thinking(m: Any) -> bool:
+    """Return True for messages that must be handled only by thinking cards."""
+    ct = getattr(m, "content_type", "text") or "text"
+    if ct == "thinking":
+        return True
+    text = getattr(m, "text", "") or ""
+    return _EXP_START in text or _EXP_END in text
+
+
 def _split_messages(messages: list[Any]) -> tuple[list[Any], list[Any]]:
     """Split messages into thinking vs non-thinking lists."""
     thinking, regular = [], []
     for m in messages:
         if getattr(m, "role", "") == "user":
             continue
-        ct = getattr(m, "content_type", "text") or "text"
-        if ct == "thinking":
+        if _looks_like_thinking(m):
             thinking.append(m)
         else:
             regular.append(m)
@@ -83,13 +91,45 @@ async def _send_regular_text(adapter, channel_id: str, regular_msgs: list[Any]) 
     combined = "\n".join(
         _clean_text(getattr(m, "text", "") or "")
         for m in regular_msgs
-        if getattr(m, "text", "")
+        if getattr(m, "text", "") and not _looks_like_thinking(m)
     )
     if combined:
         try:
             await adapter.send_text(channel_id, combined)
         except Exception:
             logger.exception("send_text failed channel=%s", channel_id)
+
+
+async def _send_regular_verbose_card(
+    adapter,
+    channel_id: str,
+    regular_msgs: list[Any],
+    *,
+    provider: str = "",
+) -> None:
+    """Send non-thinking messages through the verbose streaming card."""
+    combined = "\n".join(
+        _clean_text(getattr(m, "text", "") or "")
+        for m in regular_msgs
+        if getattr(m, "text", "") and not _looks_like_thinking(m)
+    )
+    if not combined:
+        return
+
+    from cclark.cards.streaming import VerboseCardStreamer
+    from cclark.state import get_current_turn_index
+
+    streamer = VerboseCardStreamer(
+        client=adapter._client,
+        channel_id=channel_id,
+        user_id="__channel__",
+        provider=provider,
+    )
+    try:
+        await streamer.push(combined, turn_index=get_current_turn_index(channel_id))
+        await streamer.flush()
+    except Exception:
+        logger.exception("verbose card send failed channel=%s", channel_id)
 
 
 async def _handle_thinking(adapter, channel_id: str, thinking_msgs: list[Any], verbose_on: bool) -> None:
@@ -126,11 +166,22 @@ async def _dispatch_channel_messages(
         return
 
     from cclark.state import get_verbose_state
+    from unified_icc.window_state_store import window_store
 
     verbose_on = getattr(get_verbose_state(channel_id), "_verbose_enabled", False)
     thinking_msgs, regular_msgs = _split_messages(messages)
+    provider = ""
+    window_id = _gateway.channel_router.resolve_window(channel_id)
+    if window_id:
+        ws = window_store.get_window_state(window_id)
+        provider = ws.provider_name or ""
 
-    await _send_regular_text(adapter, channel_id, regular_msgs)
+    if verbose_on:
+        await _send_regular_verbose_card(
+            adapter, channel_id, regular_msgs, provider=provider
+        )
+    else:
+        await _send_regular_text(adapter, channel_id, regular_msgs)
     await _handle_thinking(adapter, channel_id, thinking_msgs, verbose_on)
 
 

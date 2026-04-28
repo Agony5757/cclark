@@ -7,6 +7,8 @@ from cclark.state import (
     ToolbarState,
     VerboseChannelState,
     VerboseTurnState,
+    advance_turn_index,
+    get_current_turn_index,
     get_toolbar_state,
     get_verbose_state,
     reset_channel_state,
@@ -105,3 +107,16 @@ class TestGlobalStateFunctions:
     def test_reset_channel_state_idempotent(self) -> None:
         # Resetting a non-existent channel should not raise
         reset_channel_state("feishu:unknown")
+
+    def test_channel_turn_index_defaults_to_zero(self) -> None:
+        reset_channel_state("feishu:turn-default")
+        assert get_current_turn_index("feishu:turn-default") == 0
+
+    def test_advance_turn_index_is_channel_scoped(self) -> None:
+        reset_channel_state("feishu:turn-a")
+        reset_channel_state("feishu:turn-b")
+
+        assert advance_turn_index("feishu:turn-a") == 0
+        assert advance_turn_index("feishu:turn-a") == 1
+        assert get_current_turn_index("feishu:turn-a") == 1
+        assert get_current_turn_index("feishu:turn-b") == 0
