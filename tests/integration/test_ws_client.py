@@ -13,7 +13,6 @@ from cclark.webhook import app as health_app
 from cclark.ws_client import (
     decode_frame,
     encode_frame,
-    register_callback_handler,
     register_message_handler,
 )
 
@@ -63,19 +62,6 @@ class TestProtobufRoundtrip:
         assert json.loads(payload)["event"]["chat_id"] == "oc_1"
         assert service_id == 456
 
-    def test_card_callback_frame(self) -> None:
-        callback_json = json.dumps({"action": {"value": '{"action": "noop"}'}}).encode()
-        frame = encode_frame(
-            method=1,
-            payload=callback_json,
-            headers=[("type", "card")],
-            service_id=789,
-        )
-        headers, payload, service_id = decode_frame(frame)
-        assert headers["type"] == "card"
-        assert json.loads(payload)["action"]["value"] == '{"action": "noop"}'
-        assert service_id == 789
-
     def test_multiple_headers(self) -> None:
         frame = encode_frame(
             method=1,
@@ -117,24 +103,3 @@ async def test_ws_event_routes_to_registered_handler() -> None:
         handler.assert_awaited_once()
     finally:
         register_message_handler(AsyncMock())
-
-
-@pytest.mark.asyncio
-async def test_ws_callback_routes_to_registered_handler() -> None:
-    handler = AsyncMock()
-    register_callback_handler(handler)
-    try:
-        from cclark.ws_client import FeishuWSClient
-
-        client = FeishuWSClient(app_id="cli_test", app_secret="test")
-        callback_payload = json.dumps({
-            "action": {"value": '{"action": "noop"}', "message_id": "om_card1"},
-            "chat": {"chat_id": "oc_chat1", "thread_id": ""},
-            "sender": {"sender_id": {"open_id": "ou_testuser1"}},
-            "token": "test_token",
-        }).encode()
-        # _dispatch_callback expects raw JSON payload bytes (not the full encoded frame)
-        await client._dispatch_callback(callback_payload)
-        handler.assert_awaited_once()
-    finally:
-        register_callback_handler(AsyncMock())

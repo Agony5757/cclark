@@ -1,0 +1,40 @@
+# CCLark Configuration — config.yaml
+#
+# This is the preferred configuration format. CCLark reads ~/.cclark/config.yaml
+# on startup. Each app entry maps one Feishu app to one cclark process.
+#
+# For single-app setups, define one entry. For multi-app setups, define multiple
+# entries — each will get its own WebSocket connection and its own port.
+#
+# Environment variable fallback: FEISHU_APP_ID / FEISHU_APP_SECRET (single-app
+# only, for quick local development). Environment variables are ignored when
+# config.yaml exists.
+
+apps:
+  - name: "default"                         # unique name for this app
+    app_id: "cli_xxxxxxxxxxxxxxxx"           # Feishu app ID (cli_xxx)
+    app_secret: "xxxxxxxxxxxxxxxxxxxxxxxx"   # Feishu app secret
+    allowed_users: "all"                     # "all" = anyone; or comma-sep open_id list
+    provider: "claude"                       # default provider for /new
+    tmux_session: "cclark"                  # tmux session name managed by unified-icc
+    health_port: 8080                         # HTTP health-check port for load-balancer probes
+
+# ---------------------------------------------------------------------------
+# Multi-app example (uncomment to use):
+# ---------------------------------------------------------------------------
+# apps:
+#   - name: "prod"
+#     app_id: "cli_aaaa"
+#     app_secret: "aaaa"
+#     allowed_users: ""       # empty = allow all
+#     provider: "claude"
+#     tmux_session: "cclark-prod"
+#     health_port: 8080
+#
+#   - name: "dev"
+#     app_id: "cli_bbbb"
+#     app_secret: "bbbb"
+#     allowed_users: "ou_dev1,ou_dev2"   # restrict to specific users
+#     provider: "claude"
+#     tmux_session: "cclark-dev"
+#     health_port: 8081                  # different port for multi-app mode

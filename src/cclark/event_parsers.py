@@ -1,11 +1,11 @@
-"""Feishu event JSON parsers — raw webhook payload → typed event objects."""
+"""Feishu event JSON parsers — raw WS payload → typed event objects."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
+@dataclass
 class FeishuMessageEvent:
     """Parsed inbound Feishu message event."""
 
@@ -21,44 +21,24 @@ class FeishuMessageEvent:
     """Feishu message_id for reply threading."""
     msg_type: str
     """Feishu message type: text, image, file, card, etc."""
-
-
-@dataclass(frozen=True)
-class FeishuCallbackEvent:
-    """Parsed card button click callback."""
-
-    chat_id: str
-    user_id: str
-    """Feishu open_id of the user who clicked."""
-    action_value: str
-    """Raw action value from the card button's value field."""
-    message_id: str
-    """ID of the card message that was clicked."""
-    token: str
-    """Feishu callback verification token for response."""
-    thread_id: str = ""
-    """Thread ID if the card is in a thread."""
-
-
-@dataclass(frozen=True)
-class FeishuURLVerificationEvent:
-    """Webhook URL verification challenge request."""
-
-    challenge: str
+    app_name: str = "default"
+    """App name this message belongs to (set by FeishuWSClient, for multi-app routing)."""
 
 
 def parse_message_event(payload: dict) -> FeishuMessageEvent | None:
-    """Parse a Feishu im.message.receive_v1 event payload."""
+    """Parse a Feishu im.message.receive_v1 event payload (schema 1.0 and 2.0)."""
     try:
         event = payload.get("event", {})
         sender = event.get("sender", {})
         sender_id = sender.get("sender_id", {})
-        chat_id = event.get("chat_id", "")
         message = event.get("message", {})
-        msg_type = message.get("msg_type", "")
         message_id = message.get("message_id", "")
 
-        # Only handle text messages for now
+        # Schema 2.0 uses message_type and message.chat_id;
+        # schema 1.0 uses msg_type and event.chat_id
+        msg_type = message.get("message_type", "") or message.get("msg_type", "")
+        chat_id = message.get("chat_id", "") or event.get("chat_id", "")
+
         if msg_type != "text":
             return None
 
@@ -77,40 +57,3 @@ def parse_message_event(payload: dict) -> FeishuMessageEvent | None:
         )
     except (ValueError, KeyError, TypeError, AttributeError):
         return None
-
-
-def parse_callback_event(payload: dict) -> FeishuCallbackEvent | None:
-    """Parse a Feishu card button click callback payload."""
-    try:
-        action = payload.get("action", {})
-        chat = payload.get("chat", {})
-        sender = payload.get("sender", {})
-        sender_id = sender.get("sender_id", {})
-        value_raw = action.get("value", "{}")
-        if isinstance(value_raw, str):
-            import json as _json
-            value_raw = _json.loads(value_raw)
-
-        return FeishuCallbackEvent(
-            chat_id=chat.get("chat_id", ""),
-            user_id=sender_id.get("open_id", ""),
-            action_value=value_raw.get("action", ""),
-            message_id=action.get("message_id", ""),
-            token=payload.get("token", ""),
-            thread_id=chat.get("thread_id", ""),
-        )
-    except (ValueError, KeyError, TypeError, AttributeError):
-        return None
-
-
-def parse_url_verification(payload: dict) -> FeishuURLVerificationEvent | None:
-    """Parse a URL verification challenge request."""
-    challenge = payload.get("challenge", "")
-    if challenge:
-        return FeishuURLVerificationEvent(challenge=challenge)
-    return None
-
-
-def is_card_callback(payload: dict) -> bool:
-    """Return True if this is a card callback event (not a message event)."""
-    return "action" in payload and "value" in payload.get("action", {})

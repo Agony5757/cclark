@@ -25,7 +25,12 @@ async def handle_message(event: FeishuMessageEvent) -> None:
     channel_id = config.parse_channel_id(event.chat_id, event.thread_id)
     text = event.text
 
-    # /-prefixed commands
+    # Check if user is in the middle of session creation
+    from cclark.handlers.session_creation import handle_session_input
+    if await handle_session_input(event, channel_id):
+        return
+
+    # /-prefixed commands (except /select which is handled above in session creation)
     if text.startswith("/"):
         await _handle_command(event, channel_id, text)
         return
@@ -42,11 +47,12 @@ async def handle_message(event: FeishuMessageEvent) -> None:
         return
 
     # Forward text to the agent window
-    ok, err = await _gateway.send_to_window(window_id, text)
-    if not ok:
-        logger.error("Failed to send to window %s: %s", window_id, err)
+    try:
+        await _gateway.send_to_window(window_id, text)
+    except Exception:
+        logger.exception("Failed to send to window %s", window_id)
         if _adapter:
-            await _adapter.send_text(channel_id, f"Failed to send: {err}")
+            await _adapter.send_text(channel_id, "Failed to send message to session.")
 
 
 async def _handle_command(
@@ -57,7 +63,7 @@ async def _handle_command(
     cmd = parts[0].lower()
     arg = parts[1] if len(parts) > 1 else ""
 
-    if cmd in ("/new", "/start"):
+    if cmd in ("/new", "/start", "/select"):
         await _handle_new_channel(event, channel_id)
     elif cmd == "/sessions":
         await _handle_sessions(channel_id)
@@ -67,8 +73,6 @@ async def _handle_command(
         await _handle_verbose(channel_id, arg)
     elif cmd == "/screenshot":
         await _handle_screenshot(channel_id)
-    elif cmd == "/toolbar":
-        await _handle_toolbar(channel_id)
     else:
         if _adapter:
             await _adapter.send_text(channel_id, f"Unknown command: {cmd}\nUse /help for available commands.")
@@ -81,9 +85,7 @@ async def _handle_new_channel(event: FeishuMessageEvent, channel_id: str) -> Non
 
 
 async def _handle_sessions(channel_id: str) -> None:
-    """List active sessions."""
-    from cclark.cards.status import build_status_card
-
+    """List cclark-created sessions (only tmux windows created by this bot)."""
     if _gateway is None or _adapter is None:
         return
 
@@ -92,21 +94,22 @@ async def _handle_sessions(channel_id: str) -> None:
         await _adapter.send_text(channel_id, "No active sessions.")
         return
 
-    lines = ["<strong>Active Sessions</strong>"]
+    lines = ["Sessions created by this bot:"]
     for w in windows:
         provider = getattr(w, "provider", "unknown")
-        status = getattr(w, "status", "running")
         wid = getattr(w, "window_id", str(w))
-        lines.append(f"• {wid} — {provider} ({status})")
+        cwd = getattr(w, "cwd", "")
+        # Show which Feishu chat is bound to this window
+        bound_channels = _gateway.resolve_channels(wid)
+        channel_info = ""
+        if bound_channels:
+            # Show first channel (primary)
+            ch = bound_channels[0]
+            if ch.startswith("feishu:"):
+                channel_info = f" → {ch[len('feishu:'):]}"
+        lines.append(f"  {wid} — {provider} at {cwd}{channel_info}")
 
-    card = build_status_card(
-        title="Sessions",
-        window_id="",
-        provider="",
-        status="",
-        actions=[],
-    )
-    await _adapter.send_card(channel_id, card)
+    await _adapter.send_text(channel_id, "\n".join(lines))
 
 
 async def _handle_help(channel_id: str) -> None:
@@ -114,12 +117,11 @@ async def _handle_help(channel_id: str) -> None:
     if _adapter is None:
         return
     help_text = (
-        "<strong>Available commands:</strong>\n"
+        "Available commands:\n"
         "/new — Start a new session\n"
         "/sessions — List active sessions\n"
         "/verbose — Toggle verbose mode\n"
         "/screenshot — Capture screen\n"
-        "/toolbar — Show toolbar\n"
         "/help — Show this help"
     )
     await _adapter.send_text(channel_id, help_text)
@@ -129,7 +131,6 @@ async def _handle_verbose(channel_id: str, arg: str) -> None:  # noqa: ARG001
     """Toggle verbose streaming mode."""
     from cclark.state import get_verbose_state
     state = get_verbose_state(channel_id)
-    # Toggle: set a flag on the state
     current = getattr(state, "_verbose_enabled", False)
     setattr(state, "_verbose_enabled", not current)
     mode = "disabled" if current else "enabled"
@@ -142,14 +143,3 @@ async def _handle_screenshot(channel_id: str) -> None:
     from cclark.handlers.screenshot import handle_screenshot_request
     if _gateway and _adapter:
         await handle_screenshot_request(channel_id, _gateway, _adapter)
-
-
-async def _handle_toolbar(channel_id: str) -> None:
-    """Show the toolbar card for the current session."""
-    from cclark.handlers.toolbar import show_toolbar
-    if _gateway and _adapter:
-        window_id = _gateway.channel_router.resolve_window(channel_id)
-        if window_id:
-            await show_toolbar(channel_id, window_id, _adapter)
-        else:
-            await _adapter.send_text(channel_id, "No active session in this channel.")

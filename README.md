@@ -5,28 +5,29 @@
 
 **在飞书群聊和话题中控制 AI 编程助手。**
 
-CCLark 是 [unified-icc](https://github.com/Agony5757/unified-icc) 的飞书前端。它作为常驻服务运行，接收飞书消息、转发给 unified-icc 网关（驱动一个 tmux 会话），并将智能体输出以飞书交互卡片的形式流式推送回来。
+CCLark 是 [unified-icc](https://github.com/Agony5757/unified-icc) 的飞书前端。它作为常驻服务运行，通过 WebSocket 长连接实时接收飞书消息、转发给 unified-icc 网关（驱动一个 tmux 会话），并将智能体输出流式推送回来。
 
 ```
 ┌──────────────┐         ┌─────────────┐         ┌──────────────┐
-│  飞书         │  POST   │  CCLark     │         │  unified-icc │
-│  群聊/话题     │ ──────► │  webhook    │ ──────► │  网关        │
-│              │ ◄────── │  (卡片)     │ ◄────── │  (tmux)      │
-└──────────────┘ 卡片更新  └─────────────┘  事件    └──────┬───────┘
-                         推送                    tmux 会话
-                                                  ┌───┐ ┌───┐
-                                                  │@0 │ │@1 │ ...
-                                                  └───┘ └───┘
+│  飞书         │  WS     │  CCLark     │         │  unified-icc │
+│  群聊/话题     │◄══════►│  WS Client  │ ◄══════►│  网关        │
+│              │  事件    │             │  事件    │  (tmux)      │
+└──────────────┘         └─────────────┘         └──────┬───────┘
+                                                       tmux 会话
+                                                        ┌───┐
+                                                        │@0 │  ← 1:1 映射
+                                                        └───┘
 ```
 
 ## 功能特性
 
 - **会话创建** —— 全部通过飞书卡片按钮导航目录、选择智能体提供方
-- **流式输出** —— 智能体输出实时流式推送到交互卡片，在位更新
-- **丰富工具栏** —— 每个会话专属工具栏卡片（截图、Ctrl-C、模式切换、实时窗格等）
+- **流式输出** —— 智能体输出实时流式推送回飞书，在位更新
+- **丰富工具栏** —— 每个会话专属工具栏卡片（截图、Ctrl-C、模式切换等）
 - **Shell 审批** —— 危险命令需飞书按钮确认后才执行
 - **多智能体支持** —— Claude Code、Codex CLI、Gemini CLI、Pi 及交互式 Shell 会话
-- **话题路由** —— 每个飞书话题映射一个会话；未绑定话题触发会话创建流程
+- **一对一绑定** —— 每个飞书聊天（chat）绑定唯一的 tmux 窗口；重新绑定会 kill 旧会话
+- **动态生命周期** —— 所有 tmux 会话由 cclark 进程创建和管理；非 cclark 创建的会话不会被追踪
 
 ## 环境要求
 
@@ -52,35 +53,22 @@ pip install cclark
 
 ## 配置
 
-CCLark 完全通过环境变量配置：
+CCLark 通过 `~/.cclark/config.yaml` 配置（首选）。对于单应用场景，只需一个 entry：
 
-```bash
-# 飞书应用凭证
-FEISHU_APP_ID=cli_xxxxxxxx
-FEISHU_APP_SECRET=xxxxxxxxxxxxxxxx
-FEISHU_VERIFICATION_TOKEN=xxxxxxxx
-FEISHU_ENCRYPT_KEY=            # 可选，AES 加密密钥
-
-# 访问控制
-ALLOWED_USERS=ou_xxxxxxxx,ou_yyyyyyyy   # 飞书 open ID；留空表示允许所有人
-
-# 目录和默认值
-CCLARK_DIR=~/.cclark
-CCLARK_PROVIDER=claude        # 使用 /new 时的默认智能体提供方
-CCLARK_HOME=~                 # 目录浏览器的根目录
-
-# tmux
-TMUX_SESSION_NAME=cclark      # CCLark 管理的 tmux 会话名
-
-# 工具栏
-CCLARK_TOOLBAR_CONFIG=        # toolbar.toml 路径；省略则使用内置默认值
-
-# 日志
-LOG_LEVEL=INFO
-RICH_OUTPUT=true
+```yaml
+apps:
+  - name: "default"
+    app_id: "cli_xxxxxxxxxxxxxxxx"
+    app_secret: "xxxxxxxxxxxxxxxxxxxxxxxx"
+    allowed_users: "all"       # "all" 或逗号分隔的 open_id 列表
+    provider: "claude"         # /new 的默认智能体
+    tmux_session: "cclark"     # 管理的 tmux 会话名
+    health_port: 8080          # 仅多应用模式需要不同端口
 ```
 
-所有配置项详见[配置参考](https://agony5757.github.io/cclark/modules/config.html)。
+`cp config.yaml.example ~/.cclark/config.yaml` 然后填入你的 app_id 和 app_secret。
+
+**环境变量回退**（仅单应用、仅开发用）：设置 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，当 `config.yaml` 不存在时使用。
 
 ## 使用方法
 
@@ -90,7 +78,7 @@ RICH_OUTPUT=true
 cclark run
 ```
 
-这会启动 Webhook 服务器（默认端口 8080）和 unified-icc 网关。将飞书应用的 Webhook URL 配置为 `http://your-host:8080/webhook/event` 即可。
+这会启动 WebSocket 长连接（连接飞书事件服务器）和 unified-icc 网关。无需公网 Webhook URL。
 
 ### 飞书内命令
 
@@ -138,53 +126,74 @@ tests/
 
 ### 编写新测试
 
-**单元测试示例**（测试 `CallbackRegistry` 最长前缀匹配）：
+**单元测试示例**（测试 `parse_message_event` 事件解析）：
 
 ```python
-# tests/unit/test_callback_registry.py
-import pytest
-from cclark.callback_registry import CallbackRegistry
+# tests/unit/test_event_parsers.py
+from cclark.event_parsers import FeishuMessageEvent, parse_message_event
 
-@pytest.fixture
-def registry():
-    return CallbackRegistry()
+def test_valid_text_message():
+    payload = {
+        "event": {
+            "chat_id": "oc_chat1",
+            "thread_id": "",
+            "sender": {"sender_id": {"open_id": "ou_user1"}},
+            "message": {
+                "message_id": "om_msg1",
+                "msg_type": "text",
+                "content": '{"text": "hello"}',
+            },
+        }
+    }
+    result = parse_message_event(payload)
+    assert result is not None
+    assert result.text == "hello"
+    assert result.user_id == "ou_user1"
 
-def test_longest_prefix_match(registry):
-    registry.register("session:send", lambda: "send")
-    registry.register("session:send:approve", lambda: "approve")
-
-    handler, params = registry.resolve("session:send:approve:123")
-    assert handler() == "approve"
-    assert params == {"value": "session:send:approve:123"}
-
-def test_no_match_returns_none(registry):
-    registry.register("session:send", lambda: "send")
-    handler, params = registry.resolve("unrelated:action")
-    assert handler is None
+def test_non_text_message_returns_none():
+    payload = {
+        "event": {
+            "chat_id": "oc_chat1",
+            "sender": {"sender_id": {"open_id": "ou_user1"}},
+            "message": {
+                "message_id": "om_msg1",
+                "msg_type": "image",
+                "content": "{}",
+            },
+        }
+    }
+    assert parse_message_event(payload) is None
 ```
 
-**集成测试示例**（测试 Webhook 端点）：
+**集成测试示例**（测试 WS 事件分发）：
 
 ```python
-# tests/integration/test_webhook_event.py
-import pytest
-from httpx import AsyncClient, ASGITransport
-from cclark.webhook import app
+# tests/integration/test_ws_client.py
+import json
+from unittest.mock import AsyncMock
+from cclark.ws_client import FeishuWSClient, register_message_handler
 
-@pytest.fixture
-def client():
-    transport = ASGITransport(app=app)
-    return AsyncClient(transport=transport, base_url="http://test")
-
-@pytest.mark.asyncio
-async def test_message_event_routed(client, mock_feishu_client):
-    event = {
-        "schema": "2.0",
-        "header": {"event_type": "im.message.receive_v1", ...},
-        "event": {...}
-    }
-    response = await client.post("/webhook/event", json=event)
-    assert response.status_code == 200
+def test_ws_event_routes_to_registered_handler():
+    handler = AsyncMock()
+    register_message_handler(handler)
+    try:
+        client = FeishuWSClient(app_id="cli_test", app_secret="test")
+        payload = json.dumps({
+            "event": {
+                "chat_id": "oc_chat1",
+                "thread_id": "",
+                "sender": {"sender_id": {"open_id": "ou_testuser1"}},
+                "message": {
+                    "message_id": "om_msg1",
+                    "msg_type": "text",
+                    "content": '{"text": "hello"}',
+                },
+            }
+        }).encode()
+        await client._dispatch_event(payload)
+        handler.assert_awaited_once()
+    finally:
+        register_message_handler(AsyncMock())
 ```
 
 测试中使用 `pytest-asyncio`（已配置 `asyncio_mode = auto`），异步测试直接用 `async def` 无需额外标记。使用 `pytest-timeout` 将所有测试的超时限制设为 30 秒。
@@ -196,16 +205,17 @@ CCLark 分四层：
 | 层级 | 文件 | 职责 |
 |------|------|------|
 | 飞书 REST API | `feishu_client.py` | 发送消息、补丁卡片、上传文件 |
-| Webhook 服务器 | `webhook.py` | FastAPI 应用；解析飞书事件 |
-| 事件处理器 | `handlers/` | 将文本和按钮点击路由到具体操作 |
+| WS 长连接 | `ws_client.py` | 连接飞书事件服务器，接收事件 |
+| 事件处理器 | `handlers/` | 将文本消息路由到具体操作（命令、会话创建） |
 | 网关回调 | `main.py` | 接收 unified-icc 事件 → 转发到飞书 |
 
 关键设计决策：
 
+- **WebSocket 长连接** —— cclark 主动连接飞书，无需公网 URL
 - **httpx 而非 SDK** —— 飞书官方 SDK 是同步的，直接使用 httpx 保持全链路异步
-- **卡片作为主要 UI** —— 所有富输出使用飞书交互卡片；纯文本仅用于简短回复
-- **每轮一个卡片** —— `VerboseCardStreamer` 每个通道每轮智能体只维护一个流式卡片，通过 `PATCH /im/v1/messages` 就地更新
-- **最长前缀分发** —— 卡片按钮值使用 `前缀:值` 命名；`CallbackRegistry` 按最长匹配前缀路由
+- **文本交互** —— 所有对话通过文字命令；飞书 WS 模式不支持卡片按钮回调
+- **一对一绑定** —— `ChannelRouter` 确保每个飞书聊天（chat_id）始终绑定一个 tmux 窗口；channel rebind 时旧 tmux window 被 kill
+- **cclark 创建的窗口才追踪** —— `WindowStateStore._created_windows` 集合记录所有由 cclark 创建的 tmux 窗口；session monitor 的 fallback scan 仅扫描这些窗口
 
 完整数据流图见[架构文档](https://agony5757.github.io/cclark/architecture.html)。
 

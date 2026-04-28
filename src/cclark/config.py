@@ -1,15 +1,26 @@
-"""Feishu-specific configuration — reads env vars and exposes a singleton.
+"""Feishu bot configuration — config.yaml first, falls back to .env.
 
-Loads FEISHU_APP_ID, FEISHU_APP_SECRET, ALLOWED_USERS, and
-webhook verification settings from environment variables (with .env support).
+~/.cclark/config.yaml format (multi-app):
+  apps:
+    - name: "default"
+      app_id: "cli_xxx"
+      app_secret: "xxx"
+      allowed_users: "all"
+      provider: "claude"
+      tmux_session: "cclark"
+      health_port: 8080   # HTTP health-check port for load-balancer probes
 
-Key class: FeishuConfig (singleton instantiated as `config`).
+If config.yaml does not exist, falls back to FEISHU_APP_ID / FEISHU_APP_SECRET
+env vars for backward compatibility (single-app mode).
+
+Key class: FeishuConfig (singleton at module level as `config`).
 """
 
 from __future__ import annotations
 
 import os
 import structlog
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,95 +28,212 @@ from dotenv import load_dotenv
 logger = structlog.get_logger()
 
 
-def _env(name: str, default: str = "") -> str:
-    return os.getenv(name, default)
+@dataclass
+class AppConfig:
+    """Configuration for one Feishu app."""
+
+    name: str
+    app_id: str
+    app_secret: str
+    allowed_users: set[str] | None = None  # None = allow all
+    provider: str = "claude"
+    tmux_session: str = "cclark"
+    health_port: int = 8080
 
 
 class FeishuConfig:
-    """Feishu bot configuration loaded from environment variables."""
+    """Feishu bot configuration — supports multiple apps via config.yaml."""
 
     def __init__(self) -> None:
         self.config_dir = Path.home() / ".cclark"
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
+        # Always load .env for backward compat and local overrides
         for env_path in (Path(".env"), self.config_dir / ".env"):
             if env_path.is_file():
                 load_dotenv(env_path)
                 logger.debug("Loaded env from %s", env_path.resolve())
 
-        # Feishu credentials
-        self.feishu_app_id = _env("FEISHU_APP_ID")
-        if not self.feishu_app_id:
-            raise ValueError("FEISHU_APP_ID environment variable is required")
+        # Try config.yaml first, fall back to .env
+        yaml_path = self.config_dir / "config.yaml"
+        self.apps: list[AppConfig] = []
+        self._by_name: dict[str, AppConfig] = {}
 
-        self.feishu_app_secret = _env("FEISHU_APP_SECRET")
-        if not self.feishu_app_secret:
-            raise ValueError("FEISHU_APP_SECRET environment variable is required")
-
-        self.feishu_verification_token = _env("FEISHU_VERIFICATION_TOKEN", "")
-        self.feishu_encrypt_key = _env("FEISHU_ENCRYPT_KEY", "")
-
-        # Webhook settings
-        self.webhook_port = int(_env("CCLARK_WEBHOOK_PORT", "8080"))
-        self.webhook_path = _env("CCLARK_WEBHOOK_PATH", "/webhook/event")
-
-        # Authorization
-        # "all" (or empty) means allow everyone; otherwise a comma-separated list of open_ids
-        allowed_users_str = _env("ALLOWED_USERS", "").strip().lower()
-        if allowed_users_str in ("", "all"):
-            self.allowed_users: set[str] | None = None  # None = allow all
+        if yaml_path.is_file():
+            self._load_yaml(yaml_path)
         else:
-            self.allowed_users = {
-                uid.strip() for uid in allowed_users_str.split(",") if uid.strip()
-            }
+            self._load_from_env()
 
-        # Bot user ID (to skip own messages)
-        self.bot_user_id: str = _env("FEISHU_BOT_USER_ID", "")
+        if not self.apps:
+            raise ValueError(
+                "No Feishu app configured: create ~/.cclark/config.yaml or set "
+                "FEISHU_APP_ID + FEISHU_APP_SECRET in .env"
+            )
 
-        # Default provider
-        self.default_provider = _env("CCLARK_PROVIDER", "claude")
+        self._default_app: AppConfig = self.apps[0]
 
-        # Toolbar config path
-        toolbar_path = _env("CCLARK_TOOLBAR_CONFIG", "").strip()
-        if not toolbar_path:
-            fallback = self.config_dir / "toolbar.toml"
-            self.toolbar_config_path = str(fallback) if fallback.exists() else ""
-        else:
-            self.toolbar_config_path = toolbar_path
-
-        allowed_label = "all" if self.allowed_users is None else f"{len(self.allowed_users)} users"
-        logger.debug(
-            "FeishuConfig initialized: app_id=%s..., allowed_users=%s, "
-            "provider=%s",
-            self.feishu_app_id[:8],
-            allowed_label,
-            self.default_provider,
+        logger.info(
+            "FeishuConfig initialized: %d app(s), default=%s",
+            len(self.apps), self._default_app.name,
         )
 
-    def is_user_allowed(self, user_id: str) -> bool:
-        """Check if a Feishu user is in the allowed list.
+    # ── YAML loading ─────────────────────────────────────────────────────────────
 
-        Returns True if allowed_users is None (no restriction) or
-        if user_id is in the explicit allow list.
-        """
-        if self.allowed_users is None:
-            return True
-        return user_id in self.allowed_users
+    def _load_yaml(self, path: Path) -> None:
+        import yaml  # type: ignore[import]
+
+        with open(path) as f:
+            raw = yaml.safe_load(f)
+
+        apps_list = raw.get("apps", [])
+        if not isinstance(apps_list, list):
+            raise ValueError("config.yaml: 'apps' must be a list")
+
+        for item in apps_list:
+            name = str(item.get("name", ""))
+            if not name:
+                logger.warning("Skipping app entry with no name in config.yaml")
+                continue
+
+            allowed_raw = str(item.get("allowed_users", "all")).strip().lower()
+            if allowed_raw in ("", "all"):
+                allowed: set[str] | None = None
+            else:
+                allowed = {u.strip() for u in allowed_raw.split(",") if u.strip()}
+
+            app = AppConfig(
+                name=name,
+                app_id=str(item["app_id"]),
+                app_secret=str(item["app_secret"]),
+                allowed_users=allowed,
+                provider=str(item.get("provider", "claude")),
+                tmux_session=str(item.get("tmux_session", "cclark")),
+                health_port=int(item.get("health_port", 8080)),
+            )
+            self.apps.append(app)
+            self._by_name[name] = app
+
+        logger.info("Loaded %d app(s) from %s", len(self.apps), path)
+
+    # ── Env-var fallback (single-app, backward compat) ─────────────────────────
+
+    def _load_from_env(self) -> None:
+        app_id = os.getenv("FEISHU_APP_ID", "").strip()
+        app_secret = os.getenv("FEISHU_APP_SECRET", "").strip()
+        if not app_id or not app_secret:
+            return  # Will raise "no apps" above
+
+        allowed_raw = os.getenv("ALLOWED_USERS", "").strip().lower()
+        if allowed_raw in ("", "all"):
+            allowed: set[str] | None = None
+        else:
+            allowed = {u.strip() for u in allowed_raw.split(",") if u.strip()}
+
+        self.apps.append(AppConfig(
+            name="default",
+            app_id=app_id,
+            app_secret=app_secret,
+            allowed_users=allowed,
+            provider=os.getenv("CCLARK_PROVIDER", "claude"),
+            tmux_session=os.getenv("TMUX_SESSION_NAME", "cclark"),
+            health_port=int(os.getenv("CCLARK_HEALTH_PORT", "8080")),
+        ))
+        self._by_name["default"] = self.apps[0]
+        logger.info("Loaded single-app config from environment (backward compat)")
+
+    # ── App lookup ────────────────────────────────────────────────────────────
+
+    def get_app(self, name: str) -> AppConfig | None:
+        return self._by_name.get(name)
+
+    def get_default_app(self) -> AppConfig:
+        return self._default_app
+
+    @property
+    def is_multi_app(self) -> bool:
+        return len(self.apps) > 1
+
+    # ── Convenience shortcuts (single-app compatibility) ──────────────────────
+
+    @property
+    def feishu_app_id(self) -> str:
+        return self._default_app.app_id
+
+    @property
+    def feishu_app_secret(self) -> str:
+        return self._default_app.app_secret
+
+    @property
+    def allowed_users(self) -> set[str] | None:
+        return self._default_app.allowed_users
+
+    @property
+    def default_provider(self) -> str:
+        return self._default_app.provider
+
+    @property
+    def health_port(self) -> int:
+        return self._default_app.health_port
+
+    @property
+    def bot_user_id(self) -> str:
+        return os.getenv("FEISHU_BOT_USER_ID", "")
+
+    def is_user_allowed(self, user_id: str) -> bool:
+        """Check if a user is allowed (uses default app's allowed_users)."""
+        allowed = self._default_app.allowed_users
+        return allowed is None or user_id in allowed
 
     def parse_channel_id(self, chat_id: str, thread_id: str = "") -> str:
-        """Build a channel ID string from chat and thread IDs."""
+        """Build a channel ID string.
+
+        In multi-app mode: includes app name to distinguish channels
+        across apps. In single-app mode: plain feishu:chat_id[:thread_id].
+        """
         if thread_id:
-            return f"feishu:{chat_id}:{thread_id}"
-        return f"feishu:{chat_id}"
+            suffix = f":{thread_id}"
+        else:
+            suffix = ""
+        if self.is_multi_app:
+            return f"feishu:{self._default_app.name}:{chat_id}{suffix}"
+        return f"feishu:{chat_id}{suffix}"
 
     def split_channel_id(self, channel_id: str) -> tuple[str, str]:
-        """Parse a channel ID into (chat_id, thread_id)."""
-        parts = channel_id.split(":", 2)
-        if len(parts) == 3 and parts[0] == "feishu":  # noqa: PLR2004
-            return parts[1], parts[2]
-        elif len(parts) == 2 and parts[0] == "feishu":  # noqa: PLR2004
+        """Parse channel_id into (chat_id, thread_id). Handles both formats.
+
+        Single-app:  feishu:chat_id[:thread_id]
+        Multi-app:   feishu:app_name:chat_id[:thread_id]
+        """
+        parts = channel_id.split(":")
+        if len(parts) == 2:  # feishu:chat_id
             return parts[1], ""
+        if len(parts) == 3:  # feishu:chat_id:thread_id OR feishu:app:chat (if app has no _)
+            # Heuristic: if the middle part looks like a Feishu ID (oc_xxx or ou_xxx),
+            # treat as single-app. Otherwise multi-app.
+            if parts[1].startswith("oc_") or parts[1].startswith("ou_"):
+                return parts[1], parts[2]
+            # Multi-app: feishu:app_name:chat_id
+            return f"{parts[1]}:{parts[2]}", ""
+        if len(parts) == 4:  # feishu:app_name:chat_id:thread_id
+            return f"{parts[1]}:{parts[2]}", parts[3]
         raise ValueError(f"Invalid channel_id format: {channel_id!r}")
+
+    def app_name_for_channel(self, channel_id: str) -> str:
+        """Return the app name encoded in a channel_id, or 'default'."""
+        if not self.is_multi_app:
+            return "default"
+        parts = channel_id.split(":")
+        if len(parts) == 4 and parts[0] == "feishu":
+            return parts[1]
+        return "default"
+
+    def is_user_allowed_in_app(self, user_id: str, app_name: str) -> bool:
+        """Check if a user is allowed for a specific app."""
+        app = self._by_name.get(app_name)
+        if app is None:
+            return False
+        allowed = app.allowed_users
+        return allowed is None or user_id in allowed
 
 
 config = FeishuConfig()

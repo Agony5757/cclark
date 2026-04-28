@@ -1,4 +1,8 @@
-"""cclark CLI entry point — run the Feishu bot via WebSocket long connection."""
+"""cclark CLI entry point — run the Feishu bot via WebSocket long connection.
+
+Supports multi-app mode: one WS connection + adapter per app in config.yaml.
+In single-app mode (backward compat): behaves exactly as before.
+"""
 
 from __future__ import annotations
 
@@ -7,72 +11,148 @@ import signal
 import sys
 import structlog
 from contextlib import suppress
+from typing import Any
 
 import uvicorn
 from unified_icc import UnifiedICC
 
 from cclark.adapter import FeishuAdapter
-from cclark.callback_registry import dispatch as dispatch_callback
-from cclark.config import config
+from cclark.config import AppConfig, config
 from cclark.feishu_client import FeishuClient
 from cclark.handlers.message import handle_message, set_handlers
 from cclark.webhook import app as health_app
 from cclark.ws_client import (
     FeishuWSClient,
-    register_callback_handler,
     register_message_handler,
 )
 
 logger = structlog.get_logger()
 
+# ── App registry ────────────────────────────────────────────────────────────────
 
-async def _build_gateway() -> UnifiedICC:
-    """Build and start the unified-icc gateway."""
-    gateway = UnifiedICC()
-    await gateway.start()
-    logger.info("Gateway started")
-    return gateway
-
-
-def _build_adapter(client: FeishuClient) -> FeishuAdapter:
-    return FeishuAdapter(client)
+# app_name → FeishuAdapter (for routing outbound messages to the right app)
+_app_adapters: dict[str, FeishuAdapter] = {}
+# app_name → FeishuWSClient (for graceful shutdown)
+_ws_clients: dict[str, FeishuWSClient] = {}
+# app_name → FeishuClient (for cleanup)
+_feishu_clients: dict[str, FeishuClient] = {}
 
 
-async def _register_callbacks(gateway: UnifiedICC, adapter: FeishuAdapter) -> None:  # noqa: C901
+# ── App context for handlers ────────────────────────────────────────────────
+
+def get_adapter_for_channel(channel_id: str) -> FeishuAdapter | None:
+    """Look up the right FeishuAdapter for a channel_id (multi-app routing)."""
+    if _app_adapters:
+        # Multi-app: route by app name in channel_id
+        app_name = config.app_name_for_channel(channel_id)
+        return _app_adapters.get(app_name) or _app_adapters.get("default")
+    # Single-app fallback
+    return next(iter(_app_adapters.values()), None)
+
+
+# ── Gateway callbacks ────────────────────────────────────────────────────────
+
+async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901
     """Register gateway event callbacks to forward agent output to Feishu."""
 
-    async def on_message(event) -> None:
+    async def on_message(event: Any) -> None:
         try:
-            channel_ids = getattr(gateway, "channel_router").resolve_channels(event.window_id)
+            texts = [
+                getattr(m, "text", "")
+                for m in getattr(event, "messages", [])
+                if getattr(m, "text", "")
+            ]
+            combined_text = "\n".join(texts)
+            if not combined_text:
+                return
+
+            # Resolve channel_ids
+            channel_ids: list[str] = list(getattr(event, "channel_ids", []) or [])
+            if not channel_ids:
+                from unified_icc.window_state_store import window_store
+
+                session_id = getattr(event, "session_id", "")
+                direct = window_store.find_channel_by_session(session_id)
+                if direct:
+                    channel_ids = [direct]
+
+            if not channel_ids:
+                channel_ids = gateway.channel_router.resolve_channels(event.window_id)
+
+            if not channel_ids:
+                channel_ids = [
+                    cid for cid, _, _ in gateway.channel_router.iter_channel_bindings()
+                ]
+
+            if not channel_ids:
+                return
+
+            session_id = getattr(event, "session_id", "")
+            logger.info(
+                "on_message: session=%s text_len=%d → channels=%s",
+                session_id,
+                len(combined_text),
+                channel_ids,
+            )
+
             for channel_id in channel_ids:
-                if event.text:
-                    await adapter.send_text(channel_id, event.text)
-                elif event.screenshot_bytes:
-                    await adapter.send_image(channel_id, event.screenshot_bytes)
+                adapter = get_adapter_for_channel(channel_id)
+                if adapter is None:
+                    logger.warning("No adapter for channel %s", channel_id)
+                    continue
+                try:
+                    await adapter.send_text(channel_id, combined_text)
+                except Exception:
+                    logger.exception("send_text failed for channel %s", channel_id)
+
         except Exception:  # noqa: BLE001
             logger.exception("on_message handler failed")
 
-    async def on_status(event) -> None:
+    async def on_status(event: Any) -> None:
         try:
-            channel_ids = getattr(gateway, "channel_router").resolve_channels(event.window_id)
+            channel_ids = gateway.channel_router.resolve_channels(event.window_id)
+            if not channel_ids:
+                from unified_icc.window_state_store import window_store
+
+                ws = window_store.get_window_state(event.window_id)
+                if ws.channel_id:
+                    channel_ids = [ws.channel_id]
+
             for channel_id in channel_ids:
-                from cclark.cards.status import build_status_card
-                card = build_status_card(
-                    title=f"Session {event.status}",
-                    window_id=event.window_id,
-                    provider=event.provider or "unknown",
-                    status=event.status,
-                    working_dir=event.working_dir or "",
+                adapter = get_adapter_for_channel(channel_id)
+                if adapter is None:
+                    continue
+                text = (
+                    f"[status] Session {event.status} — "
+                    f"{event.provider or 'unknown'} | {event.working_dir or ''}"
                 )
-                await adapter.send_interactive_card(channel_id, card)
+                try:
+                    await adapter.send_text(channel_id, text)
+                except Exception:
+                    logger.exception("on_status failed for channel %s", channel_id)
         except Exception:  # noqa: BLE001
             logger.exception("on_status handler failed")
 
-    async def on_hook(event) -> None:
+    async def on_hook(event: Any) -> None:
         try:
-            channel_ids = getattr(gateway, "channel_router").resolve_channels(event.window_id)
+            channel_ids = gateway.channel_router.resolve_channels(event.window_id)
+            if not channel_ids:
+                from unified_icc.window_state_store import window_store
+
+                ws = window_store.get_window_state(event.window_id)
+                if ws.channel_id:
+                    channel_ids = [ws.channel_id]
+
             for channel_id in channel_ids:
-                await adapter.send_text(channel_id, f"[hook] {event.hook_name}: {event.message}")
+                adapter = get_adapter_for_channel(channel_id)
+                if adapter is None:
+                    continue
+                try:
+                    await adapter.send_text(
+                        channel_id, f"[hook] {getattr(event, 'hook_name', '')}: {getattr(event, 'message', '')}"
+                    )
+                except Exception:
+                    logger.exception("on_hook failed for channel %s", channel_id)
         except Exception:  # noqa: BLE001
             logger.exception("on_hook handler failed")
 
@@ -81,64 +161,94 @@ async def _register_callbacks(gateway: UnifiedICC, adapter: FeishuAdapter) -> No
     gateway.on_hook_event(on_hook)
 
 
+# ── WS client ────────────────────────────────────────────────────────────────
+
+
+def _build_adapter(app: AppConfig) -> FeishuAdapter:
+    client = FeishuClient(app.app_id, app.app_secret)
+    _feishu_clients[app.name] = client
+    adapter = FeishuAdapter(client)
+    _app_adapters[app.name] = adapter
+    return adapter
+
+
 async def _main() -> None:
-    """Start the cclark bot (WebSocket mode)."""
-    client = FeishuClient(config.feishu_app_id, config.feishu_app_secret)
-    adapter = _build_adapter(client)
+    """Start the cclark bot (WebSocket mode, supports multi-app)."""
+    global _ws_clients
 
-    gateway = await _build_gateway()
-    await _register_callbacks(gateway, adapter)
+    gateway = UnifiedICC()
+    await gateway.start()
+    logger.info("Gateway started")
 
-    set_handlers(gateway, adapter)
+    await _register_callbacks(gateway)
+
+    # Build one FeishuClient + Adapter per app
+    for app in config.apps:
+        _build_adapter(app)
+
+    # Use the default app's adapter for the message/handler subsystem
+    default_adapter = _app_adapters.get(config.get_default_app().name)
+    if default_adapter is None:
+        raise RuntimeError("No adapter for default app")
+    set_handlers(gateway, default_adapter)
 
     # Wire WS client → handler system
     register_message_handler(handle_message)
-    register_callback_handler(dispatch_callback)
 
     # Import handlers to trigger @register decorators
-    from cclark.handlers import callback, message, screenshot, session_creation, toolbar  # noqa: F401
+    from cclark.handlers import message, screenshot, session_creation  # noqa: F401
 
-    # Start WebSocket client (blocks until stopped)
-    ws_client = FeishuWSClient(
-        app_id=config.feishu_app_id,
-        app_secret=config.feishu_app_secret,
-    )
-    ws_task = asyncio.create_task(ws_client.start())
+    # Start one WS client per app
+    ws_tasks: list[asyncio.Task[None]] = []
+    for app in config.apps:
+        ws_client = FeishuWSClient(
+            app_id=app.app_id,
+            app_secret=app.app_secret,
+            app_name=app.name,
+        )
+        _ws_clients[app.name] = ws_client
+        ws_tasks.append(asyncio.create_task(ws_client.start()))
 
-    # Also serve health endpoint
-    uvicorn_config = uvicorn.Config(
-        health_app,
-        host="0.0.0.0",
-        port=config.webhook_port,
-        log_level="info",
-    )
-    server = uvicorn.Server(uvicorn_config)
-    server_task = asyncio.create_task(server.serve())
+    # Start one uvicorn per app (different ports in multi-app mode)
+    server_tasks: list[asyncio.Task[None]] = []
+    for app in config.apps:
+        port = app.health_port if config.is_multi_app else config.health_port
+        uvicorn_config = uvicorn.Config(
+            health_app,
+            host="0.0.0.0",
+            port=port,
+            log_level="info",
+        )
+        server = uvicorn.Server(uvicorn_config)
+        server_tasks.append(asyncio.create_task(server.serve()))
 
     async def shutdown() -> None:
         logger.info("Shutting down...")
-        await ws_client.stop()
-        ws_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await ws_task
+        for ws_client in _ws_clients.values():
+            await ws_client.stop()
+        for task in ws_tasks:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
         await gateway.stop()
-        await client.close()
+        for client in _feishu_clients.values():
+            await client.close()
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown()))
 
-    logger.info("cclark starting (WebSocket mode) on port %d", config.webhook_port)
+    app_names = ", ".join(a.name for a in config.apps)
+    logger.info("cclark starting: %d app(s) [%s]", len(config.apps), app_names)
 
-    # Run both the WebSocket client and the health server concurrently
-    await asyncio.gather(server_task, ws_task)
+    await asyncio.gather(*server_tasks, *ws_tasks)
 
 
 def main() -> None:
     """CLI entry point via pyproject.toml script."""
     if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        asyncio.set_event_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(_main())
 
 

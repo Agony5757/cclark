@@ -3,7 +3,7 @@
 Implements the Feishu proprietary binary protocol:
   1. POST /callback/ws/endpoint → get wss:// URL
   2. Connect to WebSocket, receive protobuf Frames
-  3. Decode Frames → dispatch event/card payloads to registered handlers
+  3. Decode Frames → dispatch message events to registered handlers
   4. Send pong frames for ping, auto-reconnect on disconnect
 """
 
@@ -19,12 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 import websockets
 
-from cclark.callback_registry import CallbackContext
 from cclark.config import config
-from cclark.event_parsers import (
-    parse_callback_event,
-    parse_message_event,
-)
+from cclark.event_parsers import parse_message_event
 
 logger = structlog.get_logger()
 
@@ -40,7 +36,6 @@ _METHOD_DATA = 1
 # Header keys
 _HDR_TYPE = "type"
 _TYPE_EVENT = "event"
-_TYPE_CARD = "card"
 _TYPE_PING = "ping"
 _TYPE_PONG = "pong"
 
@@ -240,18 +235,14 @@ class WSClientConfig:
 
 # ── Module-level state ───────────────────────────────────────────────────────
 
-_callback_handler: Any | None = None
 _message_handler: Any | None = None
+_seen_events: set[str] = set()
+_seen_messages: set[str] = set()
 
 
 def register_message_handler(handler: Any) -> None:
     global _message_handler
     _message_handler = handler
-
-
-def register_callback_handler(handler: Any) -> None:
-    global _callback_handler
-    _callback_handler = handler
 
 
 # ── WebSocket client ─────────────────────────────────────────────────────────
@@ -264,12 +255,14 @@ class FeishuWSClient:
         self,
         app_id: str,
         app_secret: str,
+        app_name: str = "default",
         ping_interval: float = 90.0,
-        reconnect_interval: float = 90.0,
-        reconnect_nonce: float = 25.0,
+        reconnect_interval: float = 5.0,
+        reconnect_nonce: float = 3.0,
     ) -> None:
         self._app_id = app_id
         self._app_secret = app_secret
+        self._app_name = app_name
         self._ping_interval = ping_interval
         self._reconnect_interval = reconnect_interval
         self._reconnect_nonce = reconnect_nonce
@@ -346,7 +339,7 @@ class FeishuWSClient:
     async def _connect_and_receive(self) -> None:
         """Connect to the WebSocket and run the receive loop."""
         ws_url = await self._get_ws_url()
-        headers, _, service_id = await self._handshake(ws_url)
+        _headers, _payload, service_id = await self._handshake(ws_url)
         self._service_id = service_id
         logger.info("WS connected: service_id=%d", service_id)
 
@@ -354,8 +347,16 @@ class FeishuWSClient:
         self._ping_task = asyncio.create_task(self._ping_loop())
 
         # Receive loop
-        async for raw in self._ws or []:  # type: ignore[union-attr]
-            await self._handle_frame(raw)
+        try:
+            async for raw in self._ws:
+                raw_type = type(raw).__name__
+                raw_len = len(raw) if raw else 0
+                raw_repr = repr(raw[:32]) if raw else "empty"
+                logger.warning("WS recv: type=%s len=%d repr=%s", raw_type, raw_len, raw_repr)
+                await self._handle_frame(raw)
+        except websockets.ConnectionClosed as e:
+            logger.warning("WS connection closed: code=%s reason=%s", e.code, e.reason)
+            raise
 
     async def _handshake(self, ws_url: str) -> tuple[dict[str, str], bytes, int]:
         """Perform WebSocket handshake and return initial frame info."""
@@ -384,7 +385,7 @@ class FeishuWSClient:
                 break
 
     async def _handle_frame(self, raw: bytes | str) -> None:
-        """Decode a frame and dispatch to the appropriate handler."""
+        """Decode a raw frame and dispatch to the appropriate handler."""
         if isinstance(raw, str):
             raw = raw.encode("latin1")
         try:
@@ -395,8 +396,12 @@ class FeishuWSClient:
 
         msg_type = headers.get(_HDR_TYPE, "")
 
+        logger.debug(
+            "WS frame: type=%r payload_len=%d headers=%s app=%s",
+            msg_type, len(payload), headers, self._app_name,
+        )
+
         if msg_type == _TYPE_PING:
-            # Respond with pong
             if self._ws and self._ws.open:
                 try:
                     await self._ws.send(_get_ping_frame(self._service_id))
@@ -408,12 +413,35 @@ class FeishuWSClient:
             logger.debug("WS pong received")
             return
 
+        await self._dispatch_by_type(msg_type, payload)
+
+    async def _handle_decoded_frame(
+        self, headers: dict[str, str], payload: bytes
+    ) -> None:
+        """Dispatch an already-decoded frame (e.g. from the handshake)."""
+        msg_type = headers.get(_HDR_TYPE, "")
+        await self._dispatch_by_type(msg_type, payload)
+
+    async def _dispatch_by_type(self, msg_type: str, payload: bytes) -> None:
+        """Route a frame to the event handler based on type."""
+        # Schema 2.0: event type lives in the JSON payload, not binary headers
+        if not msg_type and payload:
+            msg_type = self._classify_payload(payload)
+
         if msg_type == _TYPE_EVENT:
             await self._dispatch_event(payload)
-        elif msg_type == _TYPE_CARD:
-            await self._dispatch_callback(payload)
-        else:
-            logger.debug("WS unknown msg_type=%r payload=%r", msg_type, payload[:100])
+
+    @staticmethod
+    def _classify_payload(payload: bytes) -> str:
+        """Determine frame type from JSON payload (schema 2.0)."""
+        try:
+            data: dict[str, Any] = json.loads(payload)
+        except (json.JSONDecodeError, ValueError):
+            return ""
+        event_type: str = data.get("header", {}).get("event_type", "")
+        if event_type.startswith("im.message."):
+            return _TYPE_EVENT
+        return ""
 
     async def _dispatch_event(self, payload: bytes) -> None:
         """Parse and dispatch an inbound message event."""
@@ -425,52 +453,52 @@ class FeishuWSClient:
             logger.warning("WS event payload not JSON: %r", payload[:100])
             return
 
+        # Deduplicate by event_id (Feishu may re-deliver)
+        event_id = data.get("header", {}).get("event_id", "")
+        if event_id:
+            if event_id in _seen_events:
+                logger.debug("WS duplicate event skipped: %s", event_id)
+                return
+            _seen_events.add(event_id)
+            if len(_seen_events) > 1000:
+                _seen_events.clear()
+
         event = parse_message_event(data)
         if event is None:
-            # Non-text or malformed — skip
             return
+
+        # Also deduplicate by message_id
+        if event.message_id and event.message_id in _seen_messages:
+            logger.debug("WS duplicate message skipped: %s", event.message_id)
+            return
+        if event.message_id:
+            _seen_messages.add(event.message_id)
+            if len(_seen_messages) > 1000:
+                _seen_messages.clear()
 
         if event.user_id == config.bot_user_id:
             return
 
-        if not config.is_user_allowed(event.user_id):
+        # Multi-app auth check
+        if config.is_multi_app:
+            if not config.is_user_allowed_in_app(event.user_id, self._app_name):
+                logger.info(
+                    "WS message from unauthorized user %s for app %s",
+                    event.user_id, self._app_name,
+                )
+                return
+        elif not config.is_user_allowed(event.user_id):
             logger.info("WS message from unauthorized user %s", event.user_id)
             return
+
+        # Annotate event with app context so handlers know which app this came from
+        event._app_name = self._app_name  # type: ignore[attr-defined]
 
         try:
             await _message_handler(event)
         except Exception:
             logger.exception("WS message handler failed")
 
-    async def _dispatch_callback(self, payload: bytes) -> None:
-        """Parse and dispatch a card button callback event."""
-        if _callback_handler is None:
-            return
-        try:
-            data: dict[str, Any] = json.loads(payload)
-        except json.JSONDecodeError:
-            logger.warning("WS callback payload not JSON: %r", payload[:100])
-            return
-
-        parsed = parse_callback_event(data)
-        if parsed is None:
-            return
-
-        channel_id = config.parse_channel_id(parsed.chat_id, parsed.thread_id)
-        ctx = CallbackContext(
-            user_id=parsed.user_id,
-            chat_id=parsed.chat_id,
-            thread_id=parsed.thread_id,
-            value=parsed.action_value,
-            message_id=parsed.message_id,
-            token=parsed.token,
-            channel_id=channel_id,
-        )
-
-        try:
-            await _callback_handler(ctx)
-        except Exception:
-            logger.exception("WS callback handler failed")
 
 
 class FeishuWSError(Exception):
