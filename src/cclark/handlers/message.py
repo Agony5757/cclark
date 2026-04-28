@@ -25,6 +25,12 @@ async def handle_message(event: FeishuMessageEvent) -> None:
     channel_id = config.parse_channel_id(event.chat_id, event.thread_id)
     text = event.text
 
+    # #new must be global: it cancels any in-progress wizard and replaces the
+    # chat's tmux-Claude session.
+    if text.split(maxsplit=1)[0].lower() == "#new":
+        await _handle_hash_new(event, channel_id)
+        return
+
     # Check if user is in the middle of session creation
     from cclark.handlers.session_creation import handle_session_input
     if await handle_session_input(event, channel_id):
@@ -99,12 +105,33 @@ async def _handle_hash_command(
 async def _handle_hash_new(event: FeishuMessageEvent, channel_id: str) -> None:
     """Kill the current bound window and start the session creation wizard."""
     from cclark.state import reset_channel_state
-    from cclark.handlers.session_creation import start_session_creation
+    from cclark.handlers.session_creation import (
+        clear_session_creation,
+        start_session_creation,
+    )
+
+    clear_session_creation(event.user_id)
 
     if _gateway is not None:
-        window_id = _gateway.channel_router.resolve_window(channel_id)
-        if window_id is not None:
-            await _gateway.kill_window(window_id)
+        killed = await _gateway.kill_channel_windows(channel_id)
+        if killed and _adapter is not None:
+            await _adapter.send_text(
+                channel_id,
+                "Closed previous session window(s): " + ", ".join(killed),
+            )
+
+        orphans = await _gateway.list_orphaned_agent_windows()
+        if orphans and _adapter is not None:
+            lines = [
+                "Warning: found tmux-Claude window(s) that are no longer tracked by cclark:",
+            ]
+            for w in orphans:
+                lines.append(
+                    f"  {w.window_id} | {w.display_name} | {w.cwd or 'unknown cwd'}"
+                )
+            lines.append("They were not killed because cclark cannot prove ownership.")
+            await _adapter.send_text(channel_id, "\n".join(lines))
+
     reset_channel_state(channel_id)
     await start_session_creation(event, channel_id)
 

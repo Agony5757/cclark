@@ -14,6 +14,7 @@ from contextlib import suppress
 from typing import Any
 
 import uvicorn
+from unified_icc.adapter import CardPayload
 from unified_icc import UnifiedICC
 
 from cclark.adapter import FeishuAdapter
@@ -229,7 +230,9 @@ async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR091
 
     async def on_status(event: Any) -> None:
         try:
-            channel_ids = gateway.channel_router.resolve_channels(event.window_id)
+            channel_ids = list(getattr(event, "channel_ids", []) or [])
+            if not channel_ids:
+                channel_ids = gateway.channel_router.resolve_channels(event.window_id)
             if not channel_ids:
                 from unified_icc.window_state_store import window_store
 
@@ -241,12 +244,29 @@ async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR091
                 adapter = get_adapter_for_channel(channel_id)
                 if adapter is None:
                     continue
-                text = (
-                    f"[status] Session {event.status} — "
-                    f"{event.provider or 'unknown'} | {event.working_dir or ''}"
-                )
                 try:
-                    await adapter.send_text(channel_id, text)
+                    if getattr(event, "status", "") == "interactive":
+                        body = str(getattr(event, "display_label", "") or "").strip()
+                        if body:
+                            body = (
+                                f"{body}\n\n"
+                                "Reply with `1`, `2`, or `3` to choose in Claude."
+                            )
+                        await adapter.send_card(
+                            channel_id,
+                            CardPayload(
+                                title="Claude needs input",
+                                body=body,
+                                color="orange",
+                            ),
+                        )
+                    else:
+                        text = (
+                            f"[status] Session {event.status} — "
+                            f"{getattr(event, 'provider', '') or 'unknown'} | "
+                            f"{getattr(event, 'working_dir', '') or ''}"
+                        )
+                        await adapter.send_text(channel_id, text)
                 except Exception:
                     logger.exception("on_status failed for channel %s", channel_id)
         except Exception:  # noqa: BLE001
@@ -345,7 +365,13 @@ async def _main() -> None:
         server = uvicorn.Server(uvicorn_config)
         server_tasks.append(asyncio.create_task(server.serve()))
 
+    shutdown_started = False
+
     async def shutdown() -> None:
+        nonlocal shutdown_started
+        if shutdown_started:
+            return
+        shutdown_started = True
         logger.info("Shutting down...")
         for ws_client in _ws_clients.values():
             await ws_client.stop()

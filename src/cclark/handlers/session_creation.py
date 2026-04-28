@@ -40,6 +40,11 @@ def get_session_state(user_id: str) -> dict[str, Any] | None:
     return _sessions.get(user_id)
 
 
+def clear_session_creation(user_id: str) -> None:
+    """Cancel any in-progress session creation flow for a user."""
+    _clear_state(user_id)
+
+
 def _get_or_create_state(user_id: str, channel_id: str) -> dict[str, Any]:
     state = _sessions.setdefault(user_id, {})
     if "phase" not in state:
@@ -405,7 +410,7 @@ async def _create_window(
     ws = window_store.get_window_state(window_id)
     ws.cwd = path
     ws.provider_name = provider
-    ws.approval_mode = approval_mode
+    ws.approval_mode = "normal" if approval_mode == "standard" else approval_mode
     ws.channel_id = channel_id
     window_store._schedule_save()
 
