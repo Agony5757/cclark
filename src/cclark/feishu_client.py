@@ -83,15 +83,15 @@ class FeishuClient:
             raise FeishuAPIError(body.get("msg", "API error"), body)
         return body
 
-    async def _put(
+    async def _patch(
         self,
         path: str,
         *,
         params: dict[str, str] | None = None,
         json_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """PUT helper that handles auth, JSON encoding, and error checking."""
-        resp = await self._http.put(
+        """PATCH helper that handles auth, JSON encoding, and error checking."""
+        resp = await self._http.patch(
             f"{BASE_URL}{path}",
             headers=await self._headers(),
             params=params,
@@ -158,10 +158,10 @@ class FeishuClient:
         )
 
     async def patch_message(self, message_id: str, card_json: str) -> None:
-        """Patch (update) an existing interactive card. Feishu API uses HTTP PUT."""
+        """Patch an existing interactive card message."""
         if isinstance(card_json, dict):
             card_json = json.dumps(card_json)
-        await self._put(
+        await self._patch(
             f"/im/v1/messages/{message_id}",
             json_data={"content": card_json},
         )

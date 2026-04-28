@@ -11,6 +11,7 @@ import time
 
 import structlog
 
+from cclark.config import config
 from cclark.state import get_verbose_state
 from cclark.feishu_client import FeishuClient
 
@@ -90,8 +91,9 @@ class VerboseCardStreamer:
                     card,
                 )
             else:
+                chat_id, _thread_id = config.split_channel_id(self._channel_id)
                 msg_id = await self._client.send_interactive_card(
-                    self._channel_id,
+                    chat_id,
                     card,
                 )
                 self._state.streaming_card_id = msg_id
@@ -114,7 +116,7 @@ class VerboseCardStreamer:
         # Basic markdown-lite rendering
         escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return json.dumps({
-            "config": {"wide_screen_mode": True},
+            "config": {"wide_screen_mode": True, "update_multi": True},
             "header": {
                 "title": {
                     "tag": "plain_text",

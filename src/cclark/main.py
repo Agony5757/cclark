@@ -68,6 +68,8 @@ def _split_messages(messages: list[Any]) -> tuple[list[Any], list[Any]]:
     """Split messages into thinking vs non-thinking lists."""
     thinking, regular = [], []
     for m in messages:
+        if getattr(m, "role", "") == "user":
+            continue
         ct = getattr(m, "content_type", "text") or "text"
         if ct == "thinking":
             thinking.append(m)

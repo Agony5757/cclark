@@ -66,7 +66,7 @@ class ThinkingCardStreamer:
         if self._placeholder_only:
             content = "🤔 Thinking...OK!" if done else "🤔 Thinking..."
             return {
-                "config": {"wide_screen_mode": True},
+                "config": {"wide_screen_mode": True, "update_multi": True},
                 "header": {
                     "title": {"tag": "plain_text", "content": "🤔 Thinking..."},
                     "template": "grey",
@@ -81,7 +81,7 @@ class ThinkingCardStreamer:
         if not done:
             content = clean + "\n\n⏳ Generating…"
         return {
-            "config": {"wide_screen_mode": True},
+            "config": {"wide_screen_mode": True, "update_multi": True},
             "header": {
                 "title": {"tag": "plain_text", "content": "🤔 Thinking..."},
                 "template": "grey",
@@ -91,30 +91,19 @@ class ThinkingCardStreamer:
             ],
         }
 
-    def _build_patch(self, card: dict) -> dict:
-        """构建 Feishu update_multi patch 操作。"""
-        return {
-            "type": "update_multi",
-            "update_multi": {
-                "content": json.dumps(card),
-                "render_forward": True,
-            },
-        }
-
     async def _send_card(self, card: dict) -> str:
-        return await self._client.send_interactive_card(
+        return await self._adapter.send_interactive_card(
             self._channel_id, json.dumps(card)
         )
 
-    async def _patch_card(self, patch: dict) -> None:
+    async def _patch_card(self, card: dict) -> None:
         try:
-            await self._client.patch_message(self._card_id, json.dumps(patch))
+            await self._client.patch_message(self._card_id, json.dumps(card))
         except FeishuAPIError as exc:
             logger.warning(
                 "update_multi failed card=%s, falling back to new card: %s",
                 self._card_id, exc,
             )
-            card = json.loads(patch["update_multi"]["content"])
             msg_id = await self._send_card(card)
             self._card_id = msg_id
 
@@ -132,15 +121,13 @@ class ThinkingCardStreamer:
                 msg_id, self._channel_id,
             )
         elif is_complete:
-            patch = self._build_patch(card)
-            await self._patch_card(patch)
+            await self._patch_card(card)
             logger.info(
                 "ThinkingCard: finalized card %s channel=%s",
                 self._card_id, self._channel_id,
             )
         else:
-            patch = self._build_patch(card)
-            await self._patch_card(patch)
+            await self._patch_card(card)
             logger.debug(
                 "ThinkingCard: patched card %s channel=%s",
                 self._card_id, self._channel_id,
