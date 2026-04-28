@@ -13,6 +13,7 @@ import asyncio
 import json
 import random
 import structlog
+from pathlib import Path
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
@@ -28,7 +29,6 @@ logger = structlog.get_logger()
 
 _WS_ENDPOINT_URI = "/callback/ws/endpoint"
 _BASE_URL = "https://open.feishu.cn"
-_MAX_SEEN = 1000
 
 # Frame method (protobuf field 4, wire varint)
 _METHOD_CONTROL = 0
@@ -93,7 +93,10 @@ def _decode_varint(data: bytes, pos: int) -> tuple[int, int]:
 
 
 def _encode_field(field_num: int, wire_type: int, encoded: bytes) -> bytes:
-    return _encode_varint((field_num << 3) | wire_type) + encoded
+    tag = _encode_varint((field_num << 3) | wire_type)
+    if wire_type == _WIRE_LENGTH_DELIMITED:
+        return tag + _encode_varint(len(encoded)) + encoded
+    return tag + encoded
 
 
 def _encode_string(value: str | bytes) -> bytes:
@@ -107,11 +110,10 @@ def _encode_frame_headers(headers: list[tuple[str, str]]) -> bytes:
     for key, value in headers:
         key_bytes = key.encode("utf-8")
         value_bytes = value.encode("utf-8")
-        # Header { key: string(2), value: string(2) }
-        out += _encode_field(_HDR_FIELD_KEY, _WIRE_LENGTH_DELIMITED,
-                             _encode_varint(len(key_bytes)) + key_bytes)
-        out += _encode_field(_HDR_FIELD_VALUE, _WIRE_LENGTH_DELIMITED,
-                             _encode_varint(len(value_bytes)) + value_bytes)
+        # Each Header{key, value} is a nested proto: key field (wire2) + value field (wire2)
+        # _encode_field adds field tag + outer length; pass raw key/value bytes
+        out += _encode_field(_HDR_FIELD_KEY, _WIRE_LENGTH_DELIMITED, key_bytes)
+        out += _encode_field(_HDR_FIELD_VALUE, _WIRE_LENGTH_DELIMITED, value_bytes)
     return out
 
 
@@ -132,35 +134,35 @@ def encode_frame(
     out += _encode_field(_FIELD_SERVICE, _WIRE_VARINT, _encode_varint(service_id))
     # field 4: Method (varint)
     out += _encode_field(_FIELD_METHOD, _WIRE_VARINT, _encode_varint(method))
-    # field 5: Headers (length-delimited)
+    # field 5: Headers (length-delimited) — hdrs_bytes is the complete nested
+    # Header{} proto bytes; add field 5 tag + length, then raw hdrs_bytes
     hdrs_bytes = _encode_frame_headers(headers)
-    out += _encode_field(_FIELD_HEADERS, _WIRE_LENGTH_DELIMITED,
-                          _encode_varint(len(hdrs_bytes)) + hdrs_bytes)
-    # field 6: PayloadEncoding (length-delimited, empty)
-    out += _encode_field(_FIELD_ENCODING, _WIRE_LENGTH_DELIMITED, _encode_varint(0))
-    # field 7: PayloadType (length-delimited, empty)
-    out += _encode_field(_FIELD_TYPE, _WIRE_LENGTH_DELIMITED, _encode_varint(0))
-    # field 8: Payload (length-delimited)
-    out += _encode_field(_FIELD_PAYLOAD, _WIRE_LENGTH_DELIMITED,
-                          _encode_varint(len(payload)) + payload)
+    out += _encode_field(_FIELD_HEADERS, _WIRE_LENGTH_DELIMITED, hdrs_bytes)
+    # field 6: PayloadEncoding (length-delimited, empty = b"")
+    out += _encode_field(_FIELD_ENCODING, _WIRE_LENGTH_DELIMITED, b"")
+    # field 7: PayloadType (length-delimited, empty = b"")
+    out += _encode_field(_FIELD_TYPE, _WIRE_LENGTH_DELIMITED, b"")
+    # field 8: Payload (length-delimited) — _encode_field adds length prefix
+    out += _encode_field(_FIELD_PAYLOAD, _WIRE_LENGTH_DELIMITED, payload)
     return out
 
 
-def decode_frame(data: bytes) -> tuple[dict[str, str], bytes, int]:
-    """Decode a binary protobuf Frame.
+def decode_frame(data: bytes) -> tuple[dict[str, str], bytes, int, int]:  # noqa: C901
+    """Decode a binary protobuf Frame (Feishu WS v2).
 
-    Returns (headers_dict, payload_bytes, service_id).
+    Returns (headers_dict, payload_bytes, service_id, method).
     """
     pos = 0
     end = len(data)
     headers: dict[str, str] = {}
     payload = b""
     service_id = 0
+    method = 0
 
     while pos < end:
         b = data[pos]
         pos += 1
-        field_and_wire = b >> 3
+        field_num = b >> 3
         wire = b & 7
 
         if wire == _WIRE_VARINT:
@@ -173,13 +175,17 @@ def decode_frame(data: bytes) -> tuple[dict[str, str], bytes, int]:
         else:
             val = None
 
-        if field_and_wire == _FIELD_SERVICE:
+        if field_num == _FIELD_SERVICE:
             service_id = int(val) if isinstance(val, int) else 0
-        elif field_and_wire == _FIELD_HEADERS:  # nested Header{key,value}
+        elif field_num == _FIELD_METHOD:
+            method = int(val) if isinstance(val, int) else 0
+        elif field_num == _FIELD_HEADERS:  # nested Header{key,value}
+            assert isinstance(val, bytes), (
+                "Headers field must be length-delimited bytes"
+            )
+            headers_bytes: bytes = val
             hp = 0
             hdr_list: list[tuple[str, str]] = []
-            assert isinstance(val, bytes), "Headers field must be length-delimited bytes"
-            headers_bytes: bytes = val
             while hp < len(headers_bytes):
                 b2 = headers_bytes[hp]
                 hp += 1
@@ -190,7 +196,9 @@ def decode_frame(data: bytes) -> tuple[dict[str, str], bytes, int]:
                     hp += l2
                     b3 = headers_bytes[hp]
                     hp += 1
-                    if (b3 >> 3) == _HDR_FIELD_VALUE and (b3 & 7) == _WIRE_LENGTH_DELIMITED:
+                    if (b3 >> 3) == _HDR_FIELD_VALUE and (
+                        b3 & 7
+                    ) == _WIRE_LENGTH_DELIMITED:
                         l3, hp3 = _decode_varint(headers_bytes, hp)
                         hp = hp3
                         value = headers_bytes[hp : hp + l3].decode("utf-8")
@@ -201,10 +209,10 @@ def decode_frame(data: bytes) -> tuple[dict[str, str], bytes, int]:
                 else:
                     break
             headers = dict(hdr_list)
-        elif field_and_wire == _FIELD_PAYLOAD:
+        elif field_num == _FIELD_PAYLOAD:
             payload = val if isinstance(val, bytes) else b""
 
-    return headers, payload, service_id
+    return headers, payload, service_id, method
 
 
 # ── Ping frame (pre-built, stateless) ───────────────────────────────────────
@@ -215,7 +223,9 @@ _ping_frame: bytes | None = None
 def _get_ping_frame(service_id: int) -> bytes:
     global _ping_frame
     if _ping_frame is None:
-        _ping_frame = encode_frame(_METHOD_CONTROL, b"", [(_HDR_TYPE, _TYPE_PING)], service_id)
+        _ping_frame = encode_frame(
+            _METHOD_CONTROL, b"", [(_HDR_TYPE, _TYPE_PING)], service_id
+        )
     return _ping_frame
 
 
@@ -237,8 +247,48 @@ class WSClientConfig:
 # ── Module-level state ───────────────────────────────────────────────────────
 
 _message_handler: Any | None = None
+
+# Deduplication state — persisted to disk so events are not replayed after restart
+_SEEN_STATE_PATH = Path.home() / ".cclark" / "seen_events.json"
 _seen_events: set[str] = set()
 _seen_messages: set[str] = set()
+
+
+def _load_seen_state() -> None:
+    """Load deduplication state from disk on startup."""
+    global _seen_events, _seen_messages
+    if not _SEEN_STATE_PATH.exists():
+        return
+    try:
+        with _SEEN_STATE_PATH.open() as f:
+            data = json.load(f)
+        _seen_events = set(data.get("events", []))
+        _seen_messages = set(data.get("messages", []))
+        logger.debug(
+            "Seen state loaded: %d events, %d messages",
+            len(_seen_events),
+            len(_seen_messages),
+        )
+    except (OSError, json.JSONDecodeError):
+        logger.warning("Failed to load seen state, starting fresh")
+        _seen_events = set()
+        _seen_messages = set()
+
+
+def _save_seen_state() -> None:
+    """Persist deduplication state to disk."""
+    try:
+        _SEEN_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _SEEN_STATE_PATH.open("w") as f:
+            json.dump(
+                {"events": list(_seen_events), "messages": list(_seen_messages)}, f
+            )
+    except OSError:
+        logger.warning("Failed to save seen state")
+
+
+# Load persisted state on import
+_load_seen_state()
 
 
 def register_message_handler(handler: Any) -> None:
@@ -285,14 +335,23 @@ class FeishuWSClient:
             except asyncio.CancelledError:
                 logger.info("WS client cancelled")
                 break
-            except (OSError, websockets.WebSocketException, ConnectionError) as e:
+            except (
+                OSError,
+                websockets.WebSocketException,
+                ConnectionError,
+                TimeoutError,
+            ) as e:
                 if not self._running:
                     break
                 reconnect_count += 1
-                delay = self._reconnect_interval + random.uniform(0, self._reconnect_nonce)
+                delay = self._reconnect_interval + random.uniform(
+                    0, self._reconnect_nonce
+                )
                 logger.warning(
                     "WS disconnected: %s, reconnecting in %.1fs (attempt %d)",
-                    e, delay, reconnect_count
+                    e,
+                    delay,
+                    reconnect_count,
                 )
                 await asyncio.sleep(delay)
 
@@ -316,6 +375,7 @@ class FeishuWSClient:
     async def _get_ws_url(self) -> str:
         """Fetch the WebSocket connection URL from Feishu."""
         import httpx
+
         async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
             resp = await client.post(
                 f"{_BASE_URL}{_WS_ENDPOINT_URI}",
@@ -330,17 +390,20 @@ class FeishuWSClient:
             client_config = data["data"].get("ClientConfig", {})
             # Update timing from server config if provided
             self._ping_interval = client_config.get("PingInterval", self._ping_interval)
-            self._reconnect_interval = client_config.get("ReconnectInterval", self._reconnect_interval)
+            self._reconnect_interval = client_config.get(
+                "ReconnectInterval", self._reconnect_interval
+            )
             logger.debug(
                 "WS endpoint received: ping_interval=%ds reconnect_interval=%ds",
-                self._ping_interval, self._reconnect_interval
+                self._ping_interval,
+                self._reconnect_interval,
             )
             return url
 
     async def _connect_and_receive(self) -> None:
         """Connect to the WebSocket and run the receive loop."""
         ws_url = await self._get_ws_url()
-        _headers, _payload, service_id = await self._handshake(ws_url)
+        _headers, _payload, service_id, _method = await self._handshake(ws_url)
         self._service_id = service_id
         logger.info("WS connected: service_id=%d", service_id)
 
@@ -352,25 +415,35 @@ class FeishuWSClient:
             async for raw in self._ws:
                 raw_type = type(raw).__name__
                 raw_len = len(raw) if raw else 0
-                raw_repr = repr(raw[:32]) if raw else "empty"
-                logger.warning("WS recv: type=%s len=%d repr=%s", raw_type, raw_len, raw_repr)
+                logger.debug("WS recv: type=%s len=%d", raw_type, raw_len)
                 await self._handle_frame(raw)
         except websockets.ConnectionClosed as e:
             logger.warning("WS connection closed: code=%s reason=%s", e.code, e.reason)
             raise
 
-    async def _handshake(self, ws_url: str) -> tuple[dict[str, str], bytes, int]:
+    async def _handshake(self, ws_url: str) -> tuple[dict[str, str], bytes, int, int]:
         """Perform WebSocket handshake and return initial frame info."""
+        logger.info("WS connecting to: %s", ws_url[:80])
         self._ws = await websockets.connect(
             ws_url,
             ping_interval=None,  # We handle ping/pong ourselves at app level
-            open_timeout=15,
+            open_timeout=30,
         )
-        # Receive the first frame (usually a handshake/ping)
-        raw = await self._ws.recv()
-        headers, payload, service_id = decode_frame(raw)
-        logger.debug("WS handshake frame: headers=%s payload=%s", headers, payload[:100])
-        return headers, payload, service_id
+        # Feishu may or may not send an initial frame; wait up to 5s, then proceed.
+        # The receive loop below handles all subsequent frames.
+        try:
+            raw = await asyncio.wait_for(self._ws.recv(), timeout=5)
+            headers, payload, service_id, method = decode_frame(raw)
+            logger.debug(
+                "WS handshake: method=%d headers=%s payload_len=%d",
+                method,
+                headers,
+                len(payload),
+            )
+            return headers, payload, service_id, method
+        except asyncio.TimeoutError:
+            logger.debug("WS handshake: no initial frame within 5s, proceeding")
+            return {}, b"", 0, 0
 
     async def _ping_loop(self) -> None:
         """Send periodic ping frames."""
@@ -381,40 +454,53 @@ class FeishuWSClient:
             try:
                 await self._ws.send(_get_ping_frame(self._service_id))
                 logger.debug("WS ping sent")
-            except (OSError, websockets.WebSocketException, ConnectionError) as e:
+            except (
+                OSError,
+                websockets.WebSocketException,
+                ConnectionError,
+                TimeoutError,
+            ) as e:
                 logger.warning("WS ping failed, connection may be dead: %s", e)
                 break
 
     async def _handle_frame(self, raw: bytes | str) -> None:
-        """Decode a raw frame and dispatch to the appropriate handler."""
+        """Decode a raw Frame and dispatch to the appropriate handler."""
         if isinstance(raw, str):
             raw = raw.encode("latin1")
         try:
-            headers, payload, _service_id = decode_frame(raw)
+            headers, payload, _service_id, method = decode_frame(raw)
         except Exception:
             logger.exception("WS frame decode failed: %r", raw[:50])
             return
 
-        msg_type = headers.get(_HDR_TYPE, "")
-
         logger.debug(
-            "WS frame: type=%r payload_len=%d headers=%s app=%s",
-            msg_type, len(payload), headers, self._app_name,
+            "WS frame: method=%d headers=%s payload_len=%d",
+            method,
+            headers,
+            len(payload),
         )
 
-        if msg_type == _TYPE_PING:
-            if self._ws and self._ws.open:
-                try:
-                    await self._ws.send(_get_ping_frame(self._service_id))
-                except (OSError, websockets.WebSocketException, ConnectionError) as e:
-                    logger.warning("WS pong failed: %s", e)
+        # CONTROL frames (method=0): PING/PONG handled via headers["type"]
+        # DATA frames (method=1): event content in payload as JSON
+        if method == _METHOD_CONTROL:
+            msg_type = headers.get(_HDR_TYPE, "")
+            if msg_type == _TYPE_PING:
+                if self._ws and self._ws.open:
+                    try:
+                        await self._ws.send(_get_ping_frame(self._service_id))
+                    except (
+                        OSError,
+                        websockets.WebSocketException,
+                        ConnectionError,
+                        TimeoutError,
+                    ) as e:
+                        logger.warning("WS pong failed: %s", e)
+            elif msg_type == _TYPE_PONG:
+                logger.debug("WS pong received")
             return
 
-        if msg_type == _TYPE_PONG:
-            logger.debug("WS pong received")
-            return
-
-        await self._dispatch_by_type(msg_type, payload)
+        # DATA frames: payload is JSON-encoded event
+        await self._dispatch_by_type(_TYPE_EVENT, payload)
 
     async def _handle_decoded_frame(
         self, headers: dict[str, str], payload: bytes
@@ -425,10 +511,6 @@ class FeishuWSClient:
 
     async def _dispatch_by_type(self, msg_type: str, payload: bytes) -> None:
         """Route a frame to the event handler based on type."""
-        # Schema 2.0: event type lives in the JSON payload, not binary headers
-        if not msg_type and payload:
-            msg_type = self._classify_payload(payload)
-
         if msg_type == _TYPE_EVENT:
             await self._dispatch_event(payload)
 
@@ -461,8 +543,7 @@ class FeishuWSClient:
                 logger.debug("WS duplicate event skipped: %s", event_id)
                 return
             _seen_events.add(event_id)
-            if len(_seen_events) > _MAX_SEEN:
-                _seen_events.clear()
+            _save_seen_state()
 
         event = parse_message_event(data)
         if event is None:
@@ -474,8 +555,7 @@ class FeishuWSClient:
             return
         if event.message_id:
             _seen_messages.add(event.message_id)
-            if len(_seen_messages) > _MAX_SEEN:
-                _seen_messages.clear()
+            _save_seen_state()
 
         if event.user_id == config.bot_user_id:
             return
@@ -485,7 +565,8 @@ class FeishuWSClient:
             if not config.is_user_allowed_in_app(event.user_id, self._app_name):
                 logger.info(
                     "WS message from unauthorized user %s for app %s",
-                    event.user_id, self._app_name,
+                    event.user_id,
+                    self._app_name,
                 )
                 return
         elif not config.is_user_allowed(event.user_id):
@@ -499,7 +580,6 @@ class FeishuWSClient:
             await _message_handler(event)
         except Exception:
             logger.exception("WS message handler failed")
-
 
 
 class FeishuWSError(Exception):

@@ -42,10 +42,11 @@ class TestProtobufRoundtrip:
 
     def test_control_frame_empty(self) -> None:
         frame = encode_frame(method=0, payload=b"", headers=[("type", "ping")], service_id=123)
-        headers, payload, service_id = decode_frame(frame)
+        headers, payload, service_id, method = decode_frame(frame)
         assert headers == {"type": "ping"}
         assert payload == b""
         assert service_id == 123
+        assert method == 0
 
     def test_data_frame_with_event_payload(self) -> None:
         event_json = json.dumps({"schema": "2.0", "event": {"chat_id": "oc_1"}}).encode()
@@ -56,11 +57,12 @@ class TestProtobufRoundtrip:
             service_id=456,
             seq_id=1,
         )
-        headers, payload, service_id = decode_frame(frame)
+        headers, payload, service_id, method = decode_frame(frame)
         assert headers["type"] == "event"
         assert headers["message_id"] == "om_1"
         assert json.loads(payload)["event"]["chat_id"] == "oc_1"
         assert service_id == 456
+        assert method == 1
 
     def test_multiple_headers(self) -> None:
         frame = encode_frame(
@@ -69,10 +71,11 @@ class TestProtobufRoundtrip:
             headers=[("type", "event"), ("trace_id", "t1"), ("biz_rt", "5")],
             service_id=111,
         )
-        headers, _, _ = decode_frame(frame)
+        headers, _, _, method = decode_frame(frame)
         assert headers["type"] == "event"
         assert headers["trace_id"] == "t1"
         assert headers["biz_rt"] == "5"
+        assert method == 1
 
 
 # ── Event dispatch ─────────────────────────────────────────────────────────────

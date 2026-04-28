@@ -169,6 +169,9 @@ def _build_adapter(app: AppConfig) -> FeishuAdapter:
     _feishu_clients[app.name] = client
     adapter = FeishuAdapter(client)
     _app_adapters[app.name] = adapter
+    # Also register as 'default' so single-app routing works
+    if app.name == config.get_default_app().name:
+        _app_adapters["default"] = adapter
     return adapter
 
 
