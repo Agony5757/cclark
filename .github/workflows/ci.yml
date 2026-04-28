@@ -17,6 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout unified-icc (local dependency)
+        run: git clone --depth 1 https://github.com/Agony5757/unified-icc.git ../unified-icc
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
@@ -38,6 +41,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Checkout unified-icc (local dependency)
+        run: git clone --depth 1 https://github.com/Agony5757/unified-icc.git ../unified-icc
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
