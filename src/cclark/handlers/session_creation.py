@@ -78,29 +78,48 @@ def _list_dirs(path: str) -> list[str]:
 
 def _format_dir_listing(path: str, user_id: str) -> str:
     """Format a text directory listing for the browse phase."""
-    lines = [f"📁 Current: {path}"]
+    lines = [
+        "New session setup: choose the workspace directory.",
+        f"Current directory: {path}",
+        "",
+        "Reply with a number or folder name to enter it, .. to go up, or ok to use the current directory.",
+        "To create a new workspace here, reply with #mkdir <name>.",
+    ]
     lines.append("")
 
     dirs = _list_dirs(path)
     mru = user_preferences.get_user_mru(user_id)
 
     if mru:
-        lines.append("⭐ Recent:")
+        lines.append("Recent directories:")
         for d in mru[:5]:
             lines.append(f"  #select {d}")
         lines.append("")
 
     if dirs:
+        lines.append("Subdirectories:")
         for i, name in enumerate(dirs[:_PAGE_SIZE], 1):
             lines.append(f"  {i}. {name}")
         if len(dirs) > _PAGE_SIZE:
             lines.append(f"  ... ({len(dirs) - _PAGE_SIZE} more)")
     else:
-        lines.append("  (empty)")
+        lines.append("Subdirectories: none")
 
     lines.append("")
-    lines.append("Commands: <name/number> enter dir | .. go up | ok confirm | #select <path>")
+    lines.append("Other commands: #select <path> | #mkdir <name> | #cancel")
     return "\n".join(lines)
+
+
+def _validate_mkdir_name(name: str) -> str | None:
+    """Return an error string if name is not a safe single directory name."""
+    if not name:
+        return "Usage: #mkdir <name>"
+    if name in (".", ".."):
+        return "Directory name cannot be . or .."
+    candidate = Path(name)
+    if candidate.is_absolute() or len(candidate.parts) != 1:
+        return "Use a single directory name, not a path."
+    return None
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -195,6 +214,31 @@ async def _handle_browse(  # noqa: C901,PLR0912,PLR0915
         else:
             await _adapter.send_text(channel_id, f"Not a directory: {target}")
             return True
+
+    # #mkdir <name> — create a child directory and switch into it
+    elif text.startswith("#mkdir"):
+        raw_name = text[len("#mkdir"):].strip()
+        error = _validate_mkdir_name(raw_name)
+        if error is not None:
+            await _adapter.send_text(channel_id, error)
+            return True
+
+        target_path = Path(current_path) / raw_name
+        try:
+            target_path.mkdir()
+        except FileExistsError:
+            await _adapter.send_text(
+                channel_id,
+                f"Directory already exists: {target_path}\n\n"
+                + _format_dir_listing(current_path, event.user_id),
+            )
+            return True
+        except OSError as exc:
+            await _adapter.send_text(channel_id, f"Failed to create directory: {exc}")
+            return True
+
+        new_path = str(target_path.resolve())
+        await _adapter.send_text(channel_id, f"Created directory: {new_path}")
 
     # ok / confirm — accept current dir
     elif text.lower() in ("ok", "confirm", "yes"):

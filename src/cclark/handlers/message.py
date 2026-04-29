@@ -25,10 +25,15 @@ async def handle_message(event: FeishuMessageEvent) -> None:
     channel_id = config.parse_channel_id(event.chat_id, event.thread_id)
     text = event.text
 
-    # #new must be global: it cancels any in-progress wizard and replaces the
-    # chat's tmux-Claude session.
-    if text.split(maxsplit=1)[0].lower() == "#new":
+    # #new and #help must be global: #new cancels any in-progress wizard and
+    # replaces the chat's tmux-Claude session, while #help should never be
+    # interpreted as directory input during the wizard.
+    global_cmd = text.split(maxsplit=1)[0].lower() if text.strip() else ""
+    if global_cmd == "#new":
         await _handle_hash_new(event, channel_id)
+        return
+    if global_cmd == "#help":
+        await _handle_help(channel_id)
         return
 
     # Check if user is in the middle of session creation
@@ -48,7 +53,8 @@ async def handle_message(event: FeishuMessageEvent) -> None:
 
     window_id = _gateway.channel_router.resolve_window(channel_id)
     if window_id is None:
-        # Unbound channel — start new session creation flow
+        # Unbound channel — show explicit guidance instead of guessing that the
+        # user's first message was intended to start a new workspace.
         await _handle_new_channel(event, channel_id)
         return
 
@@ -68,9 +74,13 @@ async def handle_message(event: FeishuMessageEvent) -> None:
 
 
 async def _handle_new_channel(event: FeishuMessageEvent, channel_id: str) -> None:
-    """Start the directory browser / session creation flow."""
-    from cclark.handlers.session_creation import start_session_creation
-    await start_session_creation(event, channel_id)
+    """Show guidance for an unbound chat."""
+    if _adapter is None:
+        return
+    await _adapter.send_text(
+        channel_id,
+        "No active session is bound to this chat.\n\n" + _build_help_text(),
+    )
 
 
 async def _handle_hash_command(
@@ -89,6 +99,11 @@ async def _handle_hash_command(
         await _handle_status(channel_id)
     elif cmd == "#help":
         await _handle_help(channel_id)
+    elif cmd == "#mkdir":
+        await _adapter.send_text(
+            channel_id,
+            "Use #new first, then send #mkdir <name> during directory selection.",
+        )
     elif cmd == "#screenshot":
         await _handle_screenshot(channel_id)
     elif cmd == "#verbose":
@@ -98,7 +113,7 @@ async def _handle_hash_command(
             await _adapter.send_text(
                 channel_id,
                 f"Unknown command: {cmd}\n"
-                "Available: #new, #session list, #session close <wid>, #status, #help, #verbose on|off",
+                "Send #help for available commands.",
             )
 
 
@@ -235,18 +250,24 @@ async def _handle_help(channel_id: str) -> None:
     """Send help text."""
     if _adapter is None:
         return
-    help_text = (
+    await _adapter.send_text(channel_id, _build_help_text())
+
+
+def _build_help_text() -> str:
+    return (
         "cclark commands:\n"
-        "#new — Kill current session and start fresh\n"
-        "#session list — List all active sessions\n"
-        "#session close <wid> — Close a session by window id\n"
-        "#status — Show current session status\n"
-        "#help — Show this help\n"
-        "#verbose on|off — Toggle verbose mode\n"
+        "#new — Start a fresh Claude workspace for this chat. If this chat already has one, cclark closes it first.\n"
+        "#mkdir <name> — During #new directory selection, create a new child directory and switch into it.\n"
+        "#status — Show the session bound to this chat.\n"
+        "#verbose on|off — Show or hide streaming/thinking details.\n"
+        "#session list — List active tmux sessions managed by cclark.\n"
+        "#session close <window_id> — Close a specific managed tmux session.\n"
+        "#screenshot — Send a screenshot of the current tmux window.\n"
+        "#help — Show this help.\n"
         "\n"
-        "All other messages (including / commands) are sent to the agent."
+        "To begin: send #new, choose a directory, send ok, choose a provider, then choose standard or yolo mode.\n"
+        "After a session starts, normal text and Claude slash commands such as /status are forwarded to Claude."
     )
-    await _adapter.send_text(channel_id, help_text)
 
 
 async def _handle_screenshot(channel_id: str) -> None:
