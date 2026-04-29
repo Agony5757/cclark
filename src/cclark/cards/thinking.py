@@ -111,6 +111,7 @@ class ThinkingCardStreamer:
         """推送一段 thinking 文本。"""
         if not text:
             return
+        self._state.streaming_thinking_text = text
         card = self._build_card(text, done=is_complete)
 
         if self._card_id is None:
@@ -133,5 +134,24 @@ class ThinkingCardStreamer:
                 self._card_id, self._channel_id,
             )
 
+        if is_complete:
+            self.reset()
+
+    async def finalize(self) -> None:
+        """Mark the current thinking card complete and stop updating it."""
+        if self._card_id is None:
+            return
+        card = self._build_card(
+            self._state.streaming_thinking_text or "Done.",
+            done=True,
+        )
+        await self._patch_card(card)
+        logger.info(
+            "ThinkingCard: finalized card %s channel=%s",
+            self._card_id, self._channel_id,
+        )
+        self.reset()
+
     def reset(self) -> None:
         self._state.streaming_thinking_card_id = None
+        self._state.streaming_thinking_text = ""

@@ -7,11 +7,14 @@ import pytest
 
 from cclark.cards.thinking import ThinkingCardStreamer
 from cclark.feishu_client import FeishuClient
+from cclark.state import reset_channel_state
 
 
 def _make_streamer(*, placeholder_only: bool = False) -> ThinkingCardStreamer:
+    reset_channel_state("feishu:oc_test_chat")
     adapter = MagicMock()
     adapter._client = MagicMock(spec=FeishuClient)
+    adapter._client.patch_message = AsyncMock()
     adapter.send_interactive_card = AsyncMock(return_value="om_card")
     return ThinkingCardStreamer(
         adapter,
@@ -42,3 +45,24 @@ async def test_patch_message_uses_http_patch() -> None:
     _, kwargs = client._http.patch.await_args
     assert kwargs["json"] == {"content": json.dumps({"config": {"update_multi": True}})}
 
+
+@pytest.mark.asyncio
+async def test_completed_thinking_card_resets_active_card() -> None:
+    streamer = _make_streamer()
+
+    await streamer.push_thinking("done", is_complete=True)
+
+    assert streamer._state.streaming_thinking_card_id is None
+    assert streamer._state.streaming_thinking_text == ""
+
+
+@pytest.mark.asyncio
+async def test_finalize_patches_active_card_and_resets_state() -> None:
+    streamer = _make_streamer()
+
+    await streamer.push_thinking("working", is_complete=False)
+    await streamer.finalize()
+
+    streamer._client.patch_message.assert_awaited_once()
+    assert streamer._state.streaming_thinking_card_id is None
+    assert streamer._state.streaming_thinking_text == ""

@@ -154,6 +154,17 @@ async def _handle_thinking(adapter, channel_id: str, thinking_msgs: list[Any], v
             logger.exception("ThinkingCardStreamer failed channel=%s", channel_id)
 
 
+async def _finalize_thinking(adapter, channel_id: str) -> None:
+    """Finish any active thinking card before output or prompt cards begin."""
+    from cclark.cards.thinking import ThinkingCardStreamer
+
+    streamer = ThinkingCardStreamer(adapter, channel_id)
+    try:
+        await streamer.finalize()
+    except Exception:
+        logger.exception("ThinkingCardStreamer finalize failed channel=%s", channel_id)
+
+
 async def _dispatch_channel_messages(
     channel_id: str,
     messages: list[Any],
@@ -177,13 +188,12 @@ async def _dispatch_channel_messages(
         ws = window_store.get_window_state(window_id)
         provider = ws.provider_name or ""
 
-    if verbose_on:
+    await _handle_thinking(adapter, channel_id, thinking_msgs, verbose_on)
+    if regular_msgs:
+        await _finalize_thinking(adapter, channel_id)
         await _send_regular_verbose_card(
             adapter, channel_id, regular_msgs, provider=provider
         )
-    else:
-        await _send_regular_text(adapter, channel_id, regular_msgs)
-    await _handle_thinking(adapter, channel_id, thinking_msgs, verbose_on)
 
 
 async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR0915
@@ -247,10 +257,15 @@ async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR091
                 try:
                     if getattr(event, "status", "") == "interactive":
                         body = str(getattr(event, "display_label", "") or "").strip()
+                        from cclark.handlers.message import set_terminal_prompt_state
+
+                        set_terminal_prompt_state(channel_id, body)
+                        await _finalize_thinking(adapter, channel_id)
                         if body:
                             body = (
                                 f"{body}\n\n"
-                                "Reply with `1`, `2`, or `3` to choose in Claude."
+                                "Reply with `1`, `2`, or `3` to choose in Claude.\n"
+                                "For plan option `3`, reply `3` first, then send the feedback text."
                             )
                         await adapter.send_card(
                             channel_id,

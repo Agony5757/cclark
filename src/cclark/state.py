@@ -35,6 +35,8 @@ class VerboseChannelState:
     """Per-user-id or per-window-id turn state. Key is user_id."""
     streaming_thinking_card_id: str | None = None
     """Feishu message_id of the in-progress thinking card."""
+    streaming_thinking_text: str = ""
+    """Latest visible thinking text for the in-progress thinking card."""
     _verbose_enabled: bool = False
     """Per-channel verbose mode. Defaults to False (thinking hidden)."""
 
@@ -53,6 +55,7 @@ class VerboseChannelState:
                 for uid, ts in self.turn_states.items()
             },
             "streaming_thinking_card_id": self.streaming_thinking_card_id,
+            "streaming_thinking_text": self.streaming_thinking_text,
             "_verbose_enabled": self._verbose_enabled,
         }
 
@@ -62,6 +65,7 @@ class VerboseChannelState:
             streaming_card_id=data.get("streaming_card_id"),
             last_flush_ms=data.get("last_flush_ms", 0),
             streaming_thinking_card_id=data.get("streaming_thinking_card_id"),
+            streaming_thinking_text=data.get("streaming_thinking_text", ""),
             _verbose_enabled=data.get("_verbose_enabled", False),
         )
         for uid, ts_data in data.get("turn_states", {}).items():
@@ -106,6 +110,7 @@ def advance_turn_index(channel_id: str) -> int:
     """Advance and return the next channel-level turn index."""
     state = get_verbose_state(channel_id)
     state.streaming_thinking_card_id = None
+    state.streaming_thinking_text = ""
     ts = state.turn_state(_CHANNEL_TURN_KEY)
     ts.last_turn_index += 1
     return ts.last_turn_index
@@ -123,6 +128,7 @@ def reset_channel_state_keep_verbose(channel_id: str) -> None:
     if vs is not None:
         vs.streaming_card_id = None
         vs.streaming_thinking_card_id = None
+        vs.streaming_thinking_text = ""
         vs.last_flush_ms = 0
         vs.turn_states.clear()
     _toolbar_states.pop(channel_id, None)

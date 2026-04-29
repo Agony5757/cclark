@@ -12,12 +12,35 @@ logger = structlog.get_logger()
 # Set by main.py at startup
 _gateway = None
 _adapter = None
+_terminal_prompt_states: dict[str, dict[str, str]] = {}
 
 
 def set_handlers(gateway, adapter) -> None:
     global _gateway, _adapter
     _gateway = gateway
     _adapter = adapter
+
+
+def set_terminal_prompt_state(channel_id: str, body: str) -> None:
+    """Record the latest terminal prompt shown for a channel."""
+    text = body or ""
+    prompt_type = "interactive"
+    if (
+        "Claude has written up a plan" in text
+        or (
+            "Would you like to proceed?" in text
+            and "Tell Claude what to change" in text
+        )
+    ):
+        prompt_type = "plan_decision"
+    _terminal_prompt_states[channel_id] = {
+        "type": prompt_type,
+        "phase": "choice",
+    }
+
+
+def clear_terminal_prompt_state(channel_id: str) -> None:
+    _terminal_prompt_states.pop(channel_id, None)
 
 
 async def handle_message(event: FeishuMessageEvent) -> None:
@@ -58,6 +81,9 @@ async def handle_message(event: FeishuMessageEvent) -> None:
         await _handle_new_channel(event, channel_id)
         return
 
+    if await _handle_terminal_prompt_reply(channel_id, window_id, text):
+        return
+
     # Forward text to the agent window
     try:
         from cclark.state import advance_turn_index
@@ -68,6 +94,59 @@ async def handle_message(event: FeishuMessageEvent) -> None:
         logger.exception("Failed to send to window %s", window_id)
         if _adapter:
             await _adapter.send_text(channel_id, "Failed to send message to session.")
+
+
+async def _handle_terminal_prompt_reply(
+    channel_id: str,
+    window_id: str,
+    text: str,
+) -> bool:
+    """Handle prompt replies that need more than plain text + Enter.
+
+    Claude plan option 3 is special: selecting it should focus the feedback
+    field without immediately submitting empty feedback. The next Feishu
+    message is the feedback text and should be submitted with Enter.
+    """
+    state = _terminal_prompt_states.get(channel_id)
+    if not state:
+        return False
+
+    stripped = text.strip()
+    if state.get("type") == "plan_decision":
+        if state.get("phase") == "choice" and stripped == "3":
+            await _gateway.send_input_to_window(
+                window_id,
+                "3",
+                enter=False,
+                literal=True,
+                raw=True,
+            )
+            state["phase"] = "awaiting_feedback"
+            if _adapter is not None:
+                await _adapter.send_text(
+                    channel_id,
+                    "Plan option 3 selected. Send the feedback text next; "
+                    "cclark will submit it to Claude.",
+                )
+            return True
+
+        if state.get("phase") == "awaiting_feedback":
+            from cclark.state import advance_turn_index
+
+            advance_turn_index(channel_id)
+            await _gateway.send_to_window(window_id, text)
+            clear_terminal_prompt_state(channel_id)
+            return True
+
+    if stripped in {"1", "2", "3"}:
+        from cclark.state import advance_turn_index
+
+        advance_turn_index(channel_id)
+        await _gateway.send_to_window(window_id, stripped)
+        clear_terminal_prompt_state(channel_id)
+        return True
+
+    return False
 
 
 # ── # command system ──────────────────────────────────────────────────────────
@@ -148,6 +227,7 @@ async def _handle_hash_new(event: FeishuMessageEvent, channel_id: str) -> None:
             await _adapter.send_text(channel_id, "\n".join(lines))
 
     reset_channel_state(channel_id)
+    clear_terminal_prompt_state(channel_id)
     await start_session_creation(event, channel_id)
 
 
