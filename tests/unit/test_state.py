@@ -120,3 +120,12 @@ class TestGlobalStateFunctions:
         assert advance_turn_index("feishu:turn-a") == 1
         assert get_current_turn_index("feishu:turn-a") == 1
         assert get_current_turn_index("feishu:turn-b") == 0
+
+    def test_advance_turn_index_resets_thinking_card(self) -> None:
+        reset_channel_state("feishu:thinking-turn")
+        state = get_verbose_state("feishu:thinking-turn")
+        state.streaming_thinking_card_id = "om_old_thinking"
+
+        assert advance_turn_index("feishu:thinking-turn") == 0
+
+        assert state.streaming_thinking_card_id is None
