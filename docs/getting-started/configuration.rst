@@ -1,9 +1,36 @@
 配置参考
 =============
 
-FeishuConfig 单例
+配置来源
+-------------
 
-所有配置在导入时从环境变量加载到模块级 ``config`` 单例（定义于 ``config.py``）：
+cclark 首选从 ``~/.cclark/config.yaml`` 加载配置；只有当该文件不存在时，才使用环境变量作为单应用开发回退。
+
+.. code-block:: yaml
+
+   apps:
+     - name: "default"
+       app_id: "cli_xxxxxxxxxxxxxxxx"
+       app_secret: "xxxxxxxxxxxxxxxxxxxxxxxx"
+       allowed_users: "all"
+       provider: "claude"
+       tmux_session: "cclark"
+       health_port: 8080
+
+字段含义：
+
+- ``name``：应用名称，用于多应用路由。
+- ``app_id``：飞书应用 ID。
+- ``app_secret``：飞书应用密钥。
+- ``allowed_users``：``"all"`` 或逗号分隔的 open_id 列表。
+- ``provider``：默认 provider，例如 ``claude``。
+- ``tmux_session``：cclark 管理的 tmux session 名。
+- ``health_port``：本地 health endpoint 端口。
+
+FeishuConfig 单例
+------------------
+
+模块级 ``config`` 单例定义于 ``config.py``：
 
 .. code-block:: python
 
@@ -16,14 +43,13 @@ FeishuConfig 单例
    config.split_channel_id("feishu:chat:thread") # ("chat", "thread")
 
 加载顺序
-~~~~~~~~~~~~~
+~~~~~~~~~~~~
 
 1. ``FeishuConfig.__init__`` 在导入时运行
 2. 创建 ``~/.cclark/`` 目录（如不存在）
-3. 对 ``.env`` 文件调用 ``load_dotenv()``（如存在）
-4. 校验必需的环境变量（``FEISHU_APP_ID``、``FEISHU_APP_SECRET``、``ALLOWED_USERS``）；
-   缺失则抛出 ``ValueError``
-5. 可选环境变量使用默认值
+3. 如果 ``~/.cclark/config.yaml`` 存在，则加载其中的 ``apps`` 列表
+4. 如果配置文件不存在，则读取环境变量 ``FEISHU_APP_ID`` / ``FEISHU_APP_SECRET`` / ``ALLOWED_USERS``
+5. 可选字段使用默认值
 
 频道 ID 模型
 ----------------

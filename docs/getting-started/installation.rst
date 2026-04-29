@@ -9,6 +9,7 @@
 - 已启用机器人功能的飞书自建应用
 
 从源码安装
+------------
 
 .. code-block:: bash
 
@@ -27,7 +28,7 @@
 
    uv pip install -e .
    # 现在可以这样使用：
-   cclark run
+   cclark
 
 安装开发依赖
 
@@ -55,72 +56,25 @@
    - ``im:message:receive_v1`` — 接收事件
    - ``im:message`` — 读取消息
 
-4. 创建**消息事件**订阅，订阅 ``im.message.receive_v1``。
-5. 将 Webhook URL 设置为你的服务器，例如 ``https://your-host/webhook/event``。
-6. 记录你的**应用 ID**（``cli_xxxx``）和**应用密钥**。
+4. 启用事件订阅能力并允许应用通过长连接接收 ``im.message.receive_v1``。
+5. 记录你的**应用 ID**（``cli_xxxx``）和**应用密钥**。
 
-本地开发可使用 `ngrok <https://ngrok.com/>`_ 将本地 Webhook 端口暴露到公网：
+本项目当前主路径是 WebSocket 长连接，不需要公网 Webhook URL，也不需要 ngrok。
 
-.. code-block:: bash
+配置文件
+------------
 
-   ngrok http 8080
-   # 复制 https:// URL 并填入飞书开放平台
+首选配置文件是 ``~/.cclark/config.yaml``：
 
-环境变量
+.. code-block:: yaml
 
-必需
-~~~~~~~~
+   apps:
+     - name: "default"
+       app_id: "cli_xxxxxxxxxxxxxxxx"
+       app_secret: "xxxxxxxxxxxxxxxxxxxxxxxx"
+       allowed_users: "all"
+       provider: "claude"
+       tmux_session: "cclark"
+       health_port: 8080
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - 变量
-     - 说明
-   * - ``FEISHU_APP_ID``
-     - 飞书应用 ID（例如 ``cli_xxxx``）
-   * - ``FEISHU_APP_SECRET``
-     - 飞书应用密钥
-   * - ``ALLOWED_USERS``
-     - 有权使用机器人的飞书 open_id 或 user_id 列表（逗号分隔）
-
-可选
-~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - 变量
-     - 说明
-   * - ``FEISHU_BOT_USER_ID``
-     - 机器人自身的 open_id（用于跳过自身消息）
-   * - ``FEISHU_VERIFICATION_TOKEN``
-     - 飞书提供的 Webhook 验证令牌
-   * - ``FEISHU_ENCRYPT_KEY``
-     - 用于事件负载加密的 AES 密钥
-   * - ``CCLARK_WEBHOOK_PORT``
-     - Webhook 服务器端口（默认：8080）
-   * - ``CCLARK_WEBHOOK_PATH``
-     - Webhook URL 路径（默认：``/webhook/event``）
-   * - ``CCLARK_PROVIDER``
-     - 默认智能体提供方（默认：``claude``）
-   * - ``CCLARK_TOOLBAR_CONFIG``
-     - 工具栏 TOML 配置文件路径
-
-``.env`` 文件
--------------
-
-cclark 从以下 ``.env`` 文件加载环境变量：
-
-1. ``./.env``（仓库根目录）
-2. ``~/.cclark/.env``
-
-.. code-block:: text
-
-   FEISHU_APP_ID=cli_xxxx
-   FEISHU_APP_SECRET=xxxx
-   ALLOWED_USERS=ou_abc123
-   FEISHU_BOT_USER_ID=ou_bot
-   CCLARK_WEBHOOK_PORT=8080
-   CCLARK_PROVIDER=claude
+环境变量 ``FEISHU_APP_ID`` / ``FEISHU_APP_SECRET`` 仍可作为单应用开发回退，但不推荐作为常规配置方式。

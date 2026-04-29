@@ -1,150 +1,134 @@
 架构设计
 ============
 
-cclark 是飞书与 unified-icc 之间的轻量桥接层。它有四个独立层级，
-每个层级都有清晰的输入/输出契约。
+cclark 是飞书与 unified-icc 之间的轻量桥接层。飞书事件入口使用 WebSocket 长连接；HTTP 服务只保留 health endpoint。
 
 系统层级
+------------
 
-第 1 层 — 飞书 REST API
+第 1 层 — 飞书 WebSocket 事件
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**输入**：飞书事件服务器推送的 ``im.message.receive_v1``。
+
+**输出**：``FeishuMessageEvent``。
+
+``ws_client.py`` 负责连接飞书事件服务器、过滤非文本消息、跳过机器人自身消息、检查用户白名单，并把消息交给 handler。
+
+第 2 层 — 事件处理器
+~~~~~~~~~~~~~~~~~~~~
+
+**输入**：``FeishuMessageEvent``。
+
+**输出**：调用 unified-icc 网关或 ``FeishuAdapter``。
+
+关键 handler：
+
+* ``message.py`` — 处理 ``#`` 命令、无会话帮助、普通文本转发。
+* ``session_creation.py`` — ``#new`` 的目录 / provider / mode 向导，目录阶段支持 ``#mkdir <name>``。
+* ``screenshot.py`` — 截图当前 tmux pane 并上传飞书。
+
+第 3 层 — unified-icc 网关
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**输入**：飞书出站 Webhook POST 请求（JSON）
+**输入**：``create_window``、``send_to_window``、``send_key`` 等调用。
 
-**输出**：``FeishuClient`` HTTP 调用 → 飞书 API
+**输出**：``AgentMessageEvent``、``StatusEvent``、hook event。
 
-``feishu_client.py`` 封装了所有出站飞书 API 调用。它处理
-tenant_access_token 自动刷新、JSON 编码和错误规范化。
-它不了解 unified-icc 或事件系统。
+unified-icc 管理 tmux window、provider 启动命令、Claude transcript 监控、session id 探测、channel routing 和 startup cleanup。
 
-第 2 层 — FastAPI Webhook 服务器
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+第 4 层 — 飞书 REST API
+~~~~~~~~~~~~~~~~~~~~~~~
 
-**输入**：``POST /webhook/event`` 和 ``POST /webhook/callback``
+**输入**：文本、交互卡片、图片上传请求。
 
-**输出**：类型化事件对象（``FeishuMessageEvent``、``FeishuCallbackEvent``）
+**输出**：飞书消息。
 
-``webhook.py`` 运行一个 FastAPI 应用。它：
-
-- 处理 URL 验证挑战
-- 将原始 JSON 解析为类型化事件（``event_parsers.py``）
-- 对非文本消息静默确认
-- 检查用户白名单
-- 跳过机器人自身消息
-
-第 3 层 — 事件处理器
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**输入**：``FeishuMessageEvent`` / ``CallbackContext``
-
-**输出**：调用 unified-icc 网关 + FeishuAdapter
-
-处理器位于 ``handlers/``：
-
-* ``message.py`` — 路由入站文本；命令分发或网关转发
-* ``callback.py`` — 最长前缀分发到子处理器
-* ``session_creation.py`` — 目录浏览器、提供方选择器、窗口创建
-* ``toolbar.py`` — 工具栏卡片渲染和按钮点击处理
-* ``screenshot.py`` — 窗格截图 → 飞书图片上传
-
-第 4 层 — 网关回调
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**输入**：``gateway.on_message()``、``gateway.on_status()``、``gateway.on_hook_event()``
-
-**输出**：``FeishuAdapter`` 调用 → 飞书消息/卡片/图片
-
-网关轮询 tmux 的转录本变化并发出事件。cclark
-注册三个异步回调，将事件通过 ``FeishuAdapter`` 转发到对应的飞书频道。
+``feishu_client.py`` 负责 tenant access token、消息发送、卡片 patch、文件上传和错误规范化。
 
 关键数据流
 --------------
 
-入站文本（用户 → 智能体）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+普通消息
+~~~~~~~~
 
 ::
 
-   POST /webhook/event
-   → webhook.py:_handle_message()
+   FeishuWSClient
    → event_parsers.parse_message_event()
-   → handlers/message.py:handle_message()
+   → handlers.message.handle_message()
+   → gateway.channel_router.resolve_window(channel_id)
    → gateway.send_to_window(window_id, text)
-   → tmux_manager.send_keys()
+   → tmux pane
 
-新会话（首条消息，未绑定频道）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+无会话消息
+~~~~~~~~~~
 
 ::
 
-   handle_message() [window_id is None]
+   handle_message()
+   → no bound window
+   → FeishuAdapter.send_text("#help guidance")
+
+无会话时不会隐式创建 Claude；用户必须发送 ``#new``。
+
+新会话
+~~~~~~
+
+::
+
+   #new
+   → kill_channel_windows(channel_id)
+   → list_orphaned_agent_windows()
    → session_creation.start_session_creation()
-   → FeishuAdapter.send_interactive_card() [目录浏览器]
-   → 用户点击文件夹按钮
-   → callback → handle_dir_callback() [导航]
-   → 用户点击确认
-   → callback → handle_provider_callback() [提供方选择器]
-   → 用户点击提供方
-   → callback → handle_mode_callback() [模式选择器]
-   → _create_window()
-   → gateway.create_window(path, provider, approval_mode)
+   → directory selection
+   → optional #mkdir <name>
+   → provider selection
+   → standard/yolo mode selection
+   → gateway.create_window(path, provider, mode)
    → gateway.bind_channel(channel_id, window_id)
-   → gateway.send_to_window(window_id, pending_text)
+   → SessionMonitor.detect_session_id()
+   → window_store persists session_id
 
-智能体输出（智能体 → 用户）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-::
-
-   SessionMonitor 检测到新转录行
-   → 网关发出 AgentMessageEvent
-   → main.py:on_message() 回调
-   → FeishuAdapter.send_text(channel_id, text)
-
-工具栏按钮点击
-~~~~~~~~~~~~~~~~~~~~
+智能体输出
+~~~~~~~~~~
 
 ::
 
-   POST /webhook/callback
-   → webhook.py:_handle_callback()
-   → callback_registry.dispatch(ctx)  [最长前缀匹配]
-   → handlers/toolbar.py:handle_toolbar_callback()
-   → gateway.send_key(window_id, payload)  [key 类型]
-   → gateway.send_to_window(window_id, payload)  [text 类型]
-   → _handle_builtin()  [截图、live、dismiss 等]
+   SessionMonitor reads transcript / terminal status
+   → gateway emits AgentMessageEvent or StatusEvent
+   → main.py callback
+   → thinking card / verbose card / plain text / prompt card
+   → Feishu REST API
 
-状态管理
------------------
+状态和持久化
+--------------
 
-每个频道的流式状态保存在 ``state.py`` 的模块级全局变量中：
+- ``~/.cclark/config.yaml`` 是主配置文件。
+- ``~/.cclark/state.json`` 保存窗口状态、channel bindings、verbose 状态等。
+- unified-icc 的 ``window_store`` 记录 cclark 创建的 tmux windows，用于 startup cleanup 和 fallback transcript tracking。
+- ``#new`` 只自动清理 cclark 能证明属于当前 Feishu chat 的 managed windows；发现 orphaned Claude windows 时只提示 Warning。
 
-.. code-block:: python
+权限模式
+------------
 
-   _verbose_states[channel_id]   # VerboseChannelState
-   _toolbar_states[channel_id]   # ToolbarState
-
-会话创建期间每个用户的浏览状态保存在
-``session_creation.py`` 的模块级字典中：
-
-.. code-block:: python
-
-   _browse_state[user_id] = {"path": "...", "page": 0, "provider": "claude"}
-
-所有状态仅存于内存。重启后状态不持久化（此行为与 ccgram 一致）。
+- ``standard`` 在 cclark 中映射到 unified-icc ``normal``。
+- Claude normal launch 显式使用 ``claude --permission-mode default``。
+- 只有 ``yolo`` 使用 Claude 的危险跳过权限模式。
+- 当前 Feishu approval button callback 未接入；Claude permission prompt 通过 terminal status 桥接成卡片后，用户回复 ``1`` / ``2`` / ``3`` 完成选择。
 
 启动顺序
-----------------
+------------
 
-.. code-block:: text
+::
 
-   main.main() [CLI 入口]
-   → _main() 异步
+   main.main()
+   → load ~/.cclark/config.yaml
    → FeishuClient(app_id, app_secret)
+   → FeishuAdapter(client)
    → UnifiedICC().start()
-   → _register_callbacks()  [网关事件 → 飞书]
+   → register gateway callbacks
    → set_handlers(gateway, adapter)
-   → register_message_handler / register_callback_handler
-   → import handlers.*  [触发 @register 装饰器]
-   → create_app(client)  [FastAPI 应用]
-   → uvicorn.Server.serve()  [webhook 监听]
+   → start FeishuWSClient
+   → serve local /health endpoint
+

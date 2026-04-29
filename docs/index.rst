@@ -1,48 +1,45 @@
 cclark 文档
 =====================
 
-**cclark** 是 unified-icc 网关的飞书机器人前端。它接收飞书群聊和话题中的消息及卡片按钮点击，转发给由 unified-icc 管理的 tmux 后端 AI 智能体会话，并将智能体输出流式推送回飞书。
+**cclark** 是 unified-icc 网关的飞书前端。它通过飞书事件长连接接收群聊或话题消息，把文本转发给 unified-icc 管理的 tmux 后端 AI 编程助手，并将输出以文本或交互卡片形式发回飞书。
 
 架构概览::
 
    飞书群/话题
-          │
+          │  WebSocket 事件
           ▼
    ┌─────────────────────┐
-   │  FastAPI Webhook    │  webhook.py
-   │  POST /webhook/event│  POST /webhook/callback
+   │  FeishuWSClient     │  ws_client.py
    └──────────┬──────────┘
-              │ 解析 + 分发
+              │ FeishuMessageEvent
               ▼
    ┌─────────────────────┐
-   │  事件处理器          │  handlers/
-   │  message.py         │  callback.py
-   │  session_creation.py│  toolbar.py
+   │  handlers/message.py│  #help / #new / #status / #verbose
+   │  session_creation.py│  #mkdir / provider / mode
    └──────────┬──────────┘
-              │ send_to_window / create_window
+              │ create_window / send_to_window
               ▼
    ┌─────────────────────┐
-   │  unified-icc         │  ← tmux
-   │  网关                │  ← 智能体会话
+   │  unified-icc         │  tmux + provider + monitor
    └──────────┬──────────┘
-              │ on_message / on_status / on_hook
+              │ on_message / on_status
               ▼
    ┌─────────────────────┐
-   │  FeishuAdapter      │  adapter.py
-   │  (FrontendAdapter) │  send_text / send_card / send_image
+   │  FeishuAdapter      │  text / card / screenshot
    └──────────┬──────────┘
-              │ httpx POST
+              │ REST API
               ▼
-         飞书 REST API
+         飞书消息
 
 核心能力
 -----------------
 
-- **每话题一会话**：每个飞书话题映射一个 tmux 窗口
-- **交互卡片**：目录浏览器、提供方选择器、模式选择器、工具栏
-- **最长前缀分发**：可扩展的按钮路由，无需硬编码链
-- **详细流式输出**：智能体回合期间 2.5 秒防抖卡片更新
-- **多智能体支持**：Claude Code、Codex、Gemini CLI、Pi、Shell
+- **每聊天一会话**：每个飞书聊天绑定一个 cclark 管理的 tmux 窗口，``#new`` 会清理同聊天旧窗口。
+- **文本向导**：``#new`` 进入目录 / provider / mode 向导，目录阶段支持 ``#mkdir <name>``。
+- **显式帮助**：``#help`` 随时可用；无会话时普通消息返回帮助而不是隐式启动 Claude。
+- **详细流式输出**：``#verbose on`` 使用交互卡片展示 regular output 和 thinking output。
+- **权限提示桥接**：Claude terminal permission prompt 会显示为飞书卡片，当前通过回复 ``1`` / ``2`` / ``3`` 操作。
+- **多智能体支持**：Claude Code、Codex、Gemini CLI、Pi、Shell。
 
 .. toctree::
    :maxdepth: 2
@@ -58,27 +55,30 @@ cclark 文档
 
 .. code-block:: bash
 
-   # 设置必需的环境变量
-   export FEISHU_APP_ID=cli_xxxx
-   export FEISHU_APP_SECRET=xxx
-   export ALLOWED_USERS=ou_xxxx
-   export FEISHU_BOT_USER_ID=ou_yyyy
+   mkdir -p ~/.cclark
+   cp config.yaml.example ~/.cclark/config.yaml
+   # 填入 app_id / app_secret
+   cclark
 
-   # 运行机器人
-   cclark run
+飞书内发送：
 
-   # 或使用 Python
-   python -m cclark.main
+.. code-block:: text
+
+   #help
+   #new
 
 相关项目
 ----------------
 
-=============  ===============================================
-项目           说明
-=============  ===============================================
-unified-icc   核心网关 — tmux 会话 + 窗口管理
-ccgram        原始 Telegram 前端（上游参考）
-=============  ===============================================
+.. list-table::
+   :header-rows: 1
+
+   * - 项目
+     - 说明
+   * - unified-icc
+     - 核心网关 — tmux 会话、provider、窗口和 transcript 管理
+   * - ccgram
+     - 原始 Telegram 前端（上游参考）
 
 .. image:: https://img.shields.io/badge/python-3.12%2B-blue
    :target: https://www.python.org/
