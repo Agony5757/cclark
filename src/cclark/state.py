@@ -109,8 +109,10 @@ def get_current_turn_index(channel_id: str) -> int:
 def advance_turn_index(channel_id: str) -> int:
     """Advance and return the next channel-level turn index."""
     state = get_verbose_state(channel_id)
+    state.streaming_card_id = None
     state.streaming_thinking_card_id = None
     state.streaming_thinking_text = ""
+    state.last_flush_ms = 0
     ts = state.turn_state(_CHANNEL_TURN_KEY)
     ts.last_turn_index += 1
     return ts.last_turn_index

@@ -4,7 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from cclark.main import _send_regular_text, _send_regular_verbose_card, _split_messages
+from cclark.main import (
+    _auto_dismiss_terminal_panel,
+    _send_regular_text,
+    _send_regular_verbose_card,
+    _should_auto_dismiss_terminal_panel,
+    _split_messages,
+    _trim_terminal_panel_body,
+)
 from cclark.state import advance_turn_index, get_verbose_state, reset_channel_state
 
 
@@ -15,7 +22,7 @@ class _FakeClient:
 
     async def send_interactive_card(self, chat_id: str, card_json: str) -> str:
         self.sent_cards.append((chat_id, card_json))
-        return "om_card_1"
+        return f"om_card_{len(self.sent_cards)}"
 
     async def patch_message(self, message_id: str, card_json: str) -> None:
         self.patched_cards.append((message_id, card_json))
@@ -29,6 +36,14 @@ class _FakeAdapter:
     async def send_text(self, channel_id: str, text: str) -> str:
         self.sent_text.append((channel_id, text))
         return "om_text_1"
+
+
+class _FakeGateway:
+    def __init__(self) -> None:
+        self.keys: list[tuple[str, str]] = []
+
+    async def send_key(self, window_id: str, key: str) -> None:
+        self.keys.append((window_id, key))
 
 
 @pytest.mark.asyncio
@@ -54,6 +69,67 @@ def test_split_messages_treats_expquote_markers_as_thinking() -> None:
 
     assert [m.text for m in thinking] == [thinking_marker]
     assert [m.text for m in regular] == ["final answer"]
+
+
+def test_trim_terminal_panel_body_keeps_latest_prompt_panel() -> None:
+    body = """
+❯ /status
+  ⎿  Status dialog dismissed
+
+❯ /status
+
+─────
+   Status   Config   Usage   Stats
+
+  Version:             2.1.122
+  Esc to cancel
+"""
+
+    trimmed = _trim_terminal_panel_body(body)
+
+    assert "Status dialog dismissed" not in trimmed
+    assert trimmed.startswith("❯ /status")
+    assert "Version:             2.1.122" in trimmed
+
+
+def test_status_panel_should_auto_dismiss_after_capture() -> None:
+    body = """
+❯ /status
+
+─────
+   Status   Config   Usage   Stats
+
+  Version:             2.1.122
+  Esc to cancel
+"""
+
+    assert _should_auto_dismiss_terminal_panel(body) is True
+
+
+def test_escape_cancel_panel_should_auto_dismiss_after_capture() -> None:
+    body = """
+❯ /permissions
+
+─────
+  Permissions:  Recently denied   Allow   Ask   Deny   Workspace
+
+   ←/→ tab switch · ↓ return · Esc cancel
+"""
+
+    assert _should_auto_dismiss_terminal_panel(body) is True
+
+
+@pytest.mark.asyncio
+async def test_escape_cancel_panel_dismisses_with_retry() -> None:
+    gateway = _FakeGateway()
+
+    await _auto_dismiss_terminal_panel(
+        gateway,
+        "@1",
+        "←/→ tab switch · ↓ return · Esc cancel",
+    )
+
+    assert gateway.keys == [("@1", "Escape"), ("@1", "Escape")]
 
 
 @pytest.mark.asyncio
@@ -96,3 +172,30 @@ async def test_send_regular_verbose_card_creates_then_patches_same_turn() -> Non
     assert len(adapter._client.sent_cards) == 1
     assert len(adapter._client.patched_cards) == 1
     assert adapter.sent_text == []
+
+
+@pytest.mark.asyncio
+async def test_send_regular_verbose_card_creates_new_card_after_turn_advances() -> None:
+    channel_id = "feishu:oc_verbose_new_turn:"
+    reset_channel_state(channel_id)
+    get_verbose_state(channel_id)._verbose_enabled = True
+    adapter = _FakeAdapter()
+
+    advance_turn_index(channel_id)
+    await _send_regular_verbose_card(
+        adapter,
+        channel_id,
+        [SimpleNamespace(text="first turn")],
+        provider="claude",
+    )
+
+    advance_turn_index(channel_id)
+    await _send_regular_verbose_card(
+        adapter,
+        channel_id,
+        [SimpleNamespace(text="second turn")],
+        provider="claude",
+    )
+
+    assert len(adapter._client.sent_cards) == 2
+    assert adapter._client.patched_cards == []

@@ -40,11 +40,11 @@ main — CLI 入口点
 ``on_status`` 处理终端交互状态：
 
 - Claude permission prompt 渲染为 ``Claude needs input`` 飞书卡片。
-- 当前 card action callback 尚未接入；用户通过普通回复 ``1`` / ``2`` / ``3`` 选择。
+- 当前 card action callback 尚未接入；用户通过普通回复卡片中列出的编号选择，
+  编号数量由 Claude 当前终端 prompt 决定。
 
 关闭行为
 ------------
 
 关闭时会停止 Feishu WebSocket、停止 unified-icc gateway、flush state，并关闭 httpx client。
 shutdown 过程是幂等的，避免信号和 server stop 同时触发重复 flush。
-

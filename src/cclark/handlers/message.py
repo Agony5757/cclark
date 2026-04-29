@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import structlog
 
 from cclark.config import config
@@ -14,6 +16,9 @@ _gateway = None
 _adapter = None
 _terminal_prompt_states: dict[str, dict[str, str]] = {}
 
+_NUMBERED_OPTION_RE = re.compile(r"^\s*(?:[❯›]\s*)?(\d+)\.\s+(.+?)\s*$")
+_SELECTED_NUMBERED_OPTION_RE = re.compile(r"^\s*[❯›]\s*(\d+)\.\s+")
+
 
 def set_handlers(gateway, adapter) -> None:
     global _gateway, _adapter
@@ -21,10 +26,11 @@ def set_handlers(gateway, adapter) -> None:
     _adapter = adapter
 
 
-def set_terminal_prompt_state(channel_id: str, body: str) -> None:
-    """Record the latest terminal prompt shown for a channel."""
+def classify_terminal_prompt(body: str) -> dict[str, str] | None:
+    """Classify terminal UI text only when it expects a Feishu reply."""
     text = body or ""
-    prompt_type = "interactive"
+    options = extract_numbered_prompt_options(text)
+    selected = extract_selected_prompt_option(text)
     if (
         "Claude has written up a plan" in text
         or (
@@ -32,11 +38,103 @@ def set_terminal_prompt_state(channel_id: str, body: str) -> None:
             and "Tell Claude what to change" in text
         )
     ):
-        prompt_type = "plan_decision"
-    _terminal_prompt_states[channel_id] = {
-        "type": prompt_type,
-        "phase": "choice",
-    }
+        return {
+            "type": "plan_decision",
+            "phase": "choice",
+            "options": ",".join(options),
+            "selected": selected,
+        }
+
+    permission_markers = (
+        "Do you want to proceed?",
+        "Do you want to make this edit",
+        "Do you want to create ",
+        "Do you want to update ",
+        "Do you want to delete ",
+        "Do you want to modify ",
+        "Network request outside of sandbox",
+        "This command requires approval",
+    )
+    if any(marker in text for marker in permission_markers) or (
+        "Allow " in text and " to " in text
+    ):
+        return {
+            "type": "permission",
+            "phase": "choice",
+            "options": ",".join(options),
+            "selected": selected,
+        }
+
+    selection_markers = (
+        "Enter to select",
+        "Enter to confirm",
+        "Press enter to select",
+        "Press enter to confirm",
+        "Type to filter",
+    )
+    if any(marker in text for marker in selection_markers) and any(
+        marker in text for marker in ("☐", "✔", "☒", "❯", "›")
+    ):
+        return {
+            "type": "selection",
+            "phase": "choice",
+            "options": ",".join(options),
+            "selected": selected,
+        }
+
+    return None
+
+
+def extract_numbered_prompt_options(body: str) -> list[str]:
+    """Return every visible numbered choice from a Claude terminal prompt."""
+    options: list[str] = []
+    seen: set[str] = set()
+    for line in (body or "").splitlines():
+        match = _NUMBERED_OPTION_RE.match(line)
+        if not match:
+            continue
+        value = match.group(1)
+        if value in seen:
+            continue
+        seen.add(value)
+        options.append(value)
+    return options
+
+
+def extract_selected_prompt_option(body: str) -> str:
+    """Return the numbered option currently focused by Claude's cursor."""
+    for line in (body or "").splitlines():
+        match = _SELECTED_NUMBERED_OPTION_RE.match(line)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def build_terminal_prompt_reply_guidance(body: str, state: dict[str, str]) -> str:
+    """Build prompt-specific Feishu guidance for the current Claude terminal UI."""
+    options = extract_numbered_prompt_options(body)
+    if options:
+        choices = ", ".join(f"`{option}`" for option in options)
+        guidance = f"Reply with one of the listed numbers: {choices}."
+    else:
+        guidance = "Reply with the number shown in Claude."
+
+    if state.get("type") == "plan_decision" and "3" in options:
+        guidance += (
+            "\nFor plan option `3`, reply `3` first, then send the feedback text."
+        )
+
+    return guidance
+
+
+def set_terminal_prompt_state(channel_id: str, body: str) -> bool:
+    """Record the latest actionable terminal prompt shown for a channel."""
+    state = classify_terminal_prompt(body)
+    if state is None:
+        clear_terminal_prompt_state(channel_id)
+        return False
+    _terminal_prompt_states[channel_id] = state
+    return True
 
 
 def clear_terminal_prompt_state(channel_id: str) -> None:
@@ -112,6 +210,9 @@ async def _handle_terminal_prompt_reply(
         return False
 
     stripped = text.strip()
+    allowed_options = {
+        option for option in (state.get("options") or "").split(",") if option
+    }
     if state.get("type") == "plan_decision":
         if state.get("phase") == "choice" and stripped == "3":
             await _gateway.send_input_to_window(
@@ -138,7 +239,27 @@ async def _handle_terminal_prompt_reply(
             clear_terminal_prompt_state(channel_id)
             return True
 
-    if stripped in {"1", "2", "3"}:
+    if state.get("type") == "selection" and stripped.isdigit():
+        if allowed_options and stripped not in allowed_options:
+            await _send_invalid_prompt_option(channel_id, stripped, allowed_options)
+            return True
+
+        if await _select_terminal_option_by_navigation(
+            window_id,
+            stripped,
+            state,
+        ):
+            from cclark.state import advance_turn_index
+
+            advance_turn_index(channel_id)
+            clear_terminal_prompt_state(channel_id)
+            return True
+
+    if stripped.isdigit() and allowed_options and stripped not in allowed_options:
+        await _send_invalid_prompt_option(channel_id, stripped, allowed_options)
+        return True
+
+    if stripped.isdigit() and (not allowed_options or stripped in allowed_options):
         from cclark.state import advance_turn_index
 
         advance_turn_index(channel_id)
@@ -147,6 +268,46 @@ async def _handle_terminal_prompt_reply(
         return True
 
     return False
+
+
+async def _send_invalid_prompt_option(
+    channel_id: str,
+    stripped: str,
+    allowed_options: set[str],
+) -> None:
+    if _adapter is None:
+        return
+    choices = ", ".join(f"`{option}`" for option in sorted(allowed_options, key=int))
+    await _adapter.send_text(
+        channel_id,
+        f"`{stripped}` is not a visible Claude option. Reply with one of: {choices}.",
+    )
+
+
+async def _select_terminal_option_by_navigation(
+    window_id: str,
+    target: str,
+    state: dict[str, str],
+) -> bool:
+    """Select a Claude terminal choice by moving the UI cursor, then Enter.
+
+    Claude selection UIs render footer actions with numbers, but those rows are
+    not always numeric shortcuts. Navigating from the captured cursor position is
+    the reliable path for both ordinary rows and footer actions.
+    """
+    selected = state.get("selected") or ""
+    options = [option for option in (state.get("options") or "").split(",") if option]
+    if not selected or target not in options or selected not in options:
+        return False
+
+    current_idx = options.index(selected)
+    target_idx = options.index(target)
+    delta = target_idx - current_idx
+    key = "Down" if delta > 0 else "Up"
+    for _ in range(abs(delta)):
+        await _gateway.send_key(window_id, key)
+    await _gateway.send_key(window_id, "Enter")
+    return True
 
 
 # ── # command system ──────────────────────────────────────────────────────────

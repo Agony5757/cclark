@@ -38,7 +38,7 @@ cclark 文档
 - **文本向导**：``#new`` 进入目录 / provider / mode 向导，目录阶段支持 ``#mkdir <name>``。
 - **显式帮助**：``#help`` 随时可用；无会话时普通消息返回帮助而不是隐式启动 Claude。
 - **详细流式输出**：``#verbose on`` 使用交互卡片展示 regular output 和 thinking output。
-- **权限提示桥接**：Claude terminal permission prompt 会显示为飞书卡片，当前通过回复 ``1`` / ``2`` / ``3`` 操作。
+- **权限提示桥接**：Claude terminal permission prompt 会显示为飞书卡片，当前通过回复卡片中列出的编号操作。
 - **多智能体支持**：Claude Code、Codex、Gemini CLI、Pi、Shell。
 
 .. toctree::

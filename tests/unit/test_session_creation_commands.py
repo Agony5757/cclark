@@ -22,6 +22,7 @@ class _FakeGateway:
         self.window_id: str | None = None
         self.sent_to_window: list[tuple[str, str]] = []
         self.sent_input: list[tuple[str, str, bool, bool, bool]] = []
+        self.keys: list[tuple[str, str]] = []
         self.channel_router = SimpleNamespace(resolve_window=lambda _channel_id: self.window_id)
 
     async def kill_channel_windows(self, _channel_id: str) -> list[str]:
@@ -43,6 +44,9 @@ class _FakeGateway:
         raw: bool = False,
     ) -> None:
         self.sent_input.append((window_id, text, enter, literal, raw))
+
+    async def send_key(self, window_id: str, key: str) -> None:
+        self.keys.append((window_id, key))
 
 
 def _event(text: str) -> FeishuMessageEvent:
@@ -151,3 +155,144 @@ async def test_plan_option_three_waits_for_feedback(
     await message.handle_message(_event("一个 README 里面包括测试的结论"))
 
     assert gateway.sent_to_window == [("@42", "一个 README 里面包括测试的结论")]
+
+
+def test_status_panel_is_not_terminal_prompt() -> None:
+    panel = """
+❯ /status
+
+────────────────────────────────────────────────────────────────────────────────
+   Status   Config   Usage   Stats
+
+  Version:             2.1.122
+  Session ID:          68a7436c-be89-4b5c-8b4e-2b9b2ea6cfe3
+  cwd:                 /home/agony/projects/larkcc-test/test-20260429-0954
+  Model:               Default (claude-sonnet-4-6)
+  Setting sources:     User settings
+  Esc to cancel
+"""
+
+    assert message.classify_terminal_prompt(panel) is None
+
+
+def test_permission_panel_is_terminal_prompt() -> None:
+    panel = """
+ Do you want to create README.md?
+ ❯ 1. Yes
+   2. Yes, allow all edits in this session
+   3. No
+
+ Esc to cancel · Tab to amend
+"""
+
+    assert message.classify_terminal_prompt(panel) == {
+        "type": "permission",
+        "phase": "choice",
+        "options": "1,2,3",
+        "selected": "1",
+    }
+
+
+def test_selection_prompt_extracts_all_numbered_options() -> None:
+    panel = """
+Select model
+  Switch between Claude models.
+
+  ❯ 1. Default (recommended) ✔  Use the default model
+    2. claude-sonnet-4-6        Custom Sonnet model
+    3. claude-opus-4-7          Custom Opus model
+    4. claude-haiku-4-5         Custom Haiku model
+
+  Enter to confirm · Esc to exit
+"""
+
+    state = message.classify_terminal_prompt(panel)
+
+    assert state == {
+        "type": "selection",
+        "phase": "choice",
+        "options": "1,2,3,4",
+        "selected": "1",
+    }
+    assert message.extract_numbered_prompt_options(panel) == ["1", "2", "3", "4"]
+    assert message.extract_selected_prompt_option(panel) == "1"
+    assert message.build_terminal_prompt_reply_guidance(panel, state) == (
+        "Reply with one of the listed numbers: `1`, `2`, `3`, `4`."
+    )
+
+
+@pytest.mark.asyncio
+async def test_selection_prompt_accepts_any_visible_number(
+    fake_runtime: tuple[_FakeAdapter, _FakeGateway],
+) -> None:
+    _adapter, gateway = fake_runtime
+    gateway.window_id = "@42"
+    message.set_terminal_prompt_state(
+        "feishu:oc_test",
+        "Select model\n"
+        "  ❯ 1. Default\n"
+        "    2. Sonnet\n"
+        "    3. Opus\n"
+        "    4. Haiku\n"
+        "Enter to confirm · Esc to exit",
+    )
+
+    await message.handle_message(_event("4"))
+
+    assert gateway.sent_to_window == []
+    assert gateway.keys == [
+        ("@42", "Down"),
+        ("@42", "Down"),
+        ("@42", "Down"),
+        ("@42", "Enter"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_selection_prompt_rejects_number_not_visible(
+    fake_runtime: tuple[_FakeAdapter, _FakeGateway],
+) -> None:
+    adapter, gateway = fake_runtime
+    gateway.window_id = "@42"
+    message.set_terminal_prompt_state(
+        "feishu:oc_test",
+        "Select model\n"
+        "  ❯ 1. Default\n"
+        "    2. Sonnet\n"
+        "Enter to confirm · Esc to exit",
+    )
+
+    await message.handle_message(_event("4"))
+
+    assert gateway.sent_to_window == []
+    assert "`4` is not a visible Claude option" in adapter.sent_text[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_footer_selection_prompt_uses_navigation(
+    fake_runtime: tuple[_FakeAdapter, _FakeGateway],
+) -> None:
+    _adapter, gateway = fake_runtime
+    gateway.window_id = "@42"
+    message.set_terminal_prompt_state(
+        "feishu:oc_test",
+        "☐ 项目方向\n\n"
+        "❯ 1. 命令行计算器\n"
+        "  2. 前端测试套件\n"
+        "  3. Type something.\n"
+        "─────\n"
+        "  4. Chat about this\n"
+        "  5. Skip interview and plan immediately\n\n"
+        "Enter to select · ↑/↓ to navigate · Esc to cancel",
+    )
+
+    await message.handle_message(_event("5"))
+
+    assert gateway.sent_to_window == []
+    assert gateway.keys == [
+        ("@42", "Down"),
+        ("@42", "Down"),
+        ("@42", "Down"),
+        ("@42", "Down"),
+        ("@42", "Enter"),
+    ]

@@ -65,6 +65,34 @@ def _clean_text(raw: str) -> str:
     return raw.replace(_EXP_START, "").replace(_EXP_END, "").replace(STX, "")
 
 
+def _trim_terminal_panel_body(raw: str) -> str:
+    """Keep the current terminal panel instead of older prompt history."""
+    body = raw.strip()
+    if not body:
+        return body
+
+    lines = body.splitlines()
+    prompt_indices = [
+        idx for idx, line in enumerate(lines) if line.lstrip().startswith(("❯ ", "› "))
+    ]
+    if len(prompt_indices) <= 1:
+        return body
+    return "\n".join(lines[prompt_indices[-1] :]).strip()
+
+
+def _should_auto_dismiss_terminal_panel(body: str) -> bool:
+    """Return True for non-actionable Claude modals that block later input."""
+    return "Esc to cancel" in body or "Esc cancel" in body
+
+
+async def _auto_dismiss_terminal_panel(gateway: UnifiedICC, window_id: str, body: str) -> None:
+    """Dismiss a captured non-actionable terminal panel."""
+    await gateway.send_key(window_id, "Escape")
+    if "Esc cancel" in body and "Esc to cancel" not in body:
+        await asyncio.sleep(0.2)
+        await gateway.send_key(window_id, "Escape")
+
+
 def _looks_like_thinking(m: Any) -> bool:
     """Return True for messages that must be handled only by thinking cards."""
     ct = getattr(m, "content_type", "text") or "text"
@@ -257,24 +285,67 @@ async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR091
                 try:
                     if getattr(event, "status", "") == "interactive":
                         body = str(getattr(event, "display_label", "") or "").strip()
-                        from cclark.handlers.message import set_terminal_prompt_state
-
-                        set_terminal_prompt_state(channel_id, body)
-                        await _finalize_thinking(adapter, channel_id)
-                        if body:
-                            body = (
-                                f"{body}\n\n"
-                                "Reply with `1`, `2`, or `3` to choose in Claude.\n"
-                                "For plan option `3`, reply `3` first, then send the feedback text."
-                            )
-                        await adapter.send_card(
-                            channel_id,
-                            CardPayload(
-                                title="Claude needs input",
-                                body=body,
-                                color="orange",
-                            ),
+                        from cclark.handlers.message import (
+                            build_terminal_prompt_reply_guidance,
+                            classify_terminal_prompt,
+                            set_terminal_prompt_state,
                         )
+
+                        await _finalize_thinking(adapter, channel_id)
+                        prompt_state = classify_terminal_prompt(body)
+                        if prompt_state and set_terminal_prompt_state(channel_id, body):
+                            if body:
+                                body = (
+                                    f"{body}\n\n"
+                                    f"{build_terminal_prompt_reply_guidance(body, prompt_state)}"
+                                )
+                            await adapter.send_card(
+                                channel_id,
+                                CardPayload(
+                                    title="Claude needs input",
+                                    body=body,
+                                    color="orange",
+                                ),
+                            )
+                        elif body:
+                            from types import SimpleNamespace
+
+                            body = _trim_terminal_panel_body(body)
+                            await _send_regular_verbose_card(
+                                adapter,
+                                channel_id,
+                                [
+                                    SimpleNamespace(
+                                        text=body,
+                                        role="assistant",
+                                        content_type="text",
+                                    )
+                                ],
+                                provider=getattr(event, "provider", "") or "claude",
+                            )
+                            if _should_auto_dismiss_terminal_panel(body):
+                                logger.debug(
+                                    "Auto-dismissing terminal panel window=%s",
+                                    event.window_id,
+                                )
+                                await _auto_dismiss_terminal_panel(
+                                    gateway,
+                                    event.window_id,
+                                    body,
+                                )
+                        else:
+                            body = (
+                                "Claude is showing a terminal prompt, but cclark "
+                                "could not extract display text."
+                            )
+                            await adapter.send_card(
+                                channel_id,
+                                CardPayload(
+                                    title="Claude terminal output",
+                                    body=body,
+                                    color="blue",
+                                ),
+                            )
                     else:
                         text = (
                             f"[status] Session {event.status} — "
