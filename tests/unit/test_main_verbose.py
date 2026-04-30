@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -199,3 +200,165 @@ async def test_send_regular_verbose_card_creates_new_card_after_turn_advances() 
 
     assert len(adapter._client.sent_cards) == 2
     assert adapter._client.patched_cards == []
+
+
+# ── Simulated on_message call sequences ─────────────────────────────────────────
+
+
+async def _fake_on_message(
+    channel_id: str,
+    thinking_text: str | None,
+    regular_text: str | None,
+    thinking_complete: bool = False,
+    provider: str = "claude",
+) -> None:
+    """Simulate one on_message delivery: thinking + regular in separate dispatch calls."""
+    from types import SimpleNamespace
+    from cclark.main import _dispatch_channel_messages
+    from unittest.mock import MagicMock
+
+    gateway = MagicMock()
+    window_id = "@99"
+    gateway.channel_router.resolve_window.return_value = window_id
+
+    if thinking_text is not None:
+        thinking_msgs = [
+            SimpleNamespace(text=thinking_text, role="assistant", content_type="thinking")
+        ]
+        await _dispatch_channel_messages(channel_id, thinking_msgs, "sess", gateway)
+
+    if regular_text is not None:
+        regular_msgs = [
+            SimpleNamespace(text=regular_text, role="assistant", content_type="text")
+        ]
+        await _dispatch_channel_messages(channel_id, regular_msgs, "sess", gateway)
+
+
+@pytest.mark.asyncio
+async def test_multiple_onmessage_same_turn_produces_one_output_card() -> None:
+    """Multiple on_message calls in the same turn must produce exactly one output card.
+
+    Regression test for the bug where each on_message call created a fresh
+    VerboseCardStreamer (turn_index=-1), causing every call to flush and
+    send a NEW card instead of patching the existing one.
+    """
+    channel_id = "feishu:oc_multi_call:"
+    reset_channel_state(channel_id)
+    get_verbose_state(channel_id)._verbose_enabled = True
+    advance_turn_index(channel_id)
+
+    adapter = _FakeAdapter()
+
+    # Simulate three separate on_message deliveries in the same turn
+    # by calling _send_regular_verbose_card three times (each creates a fresh
+    # VerboseCardStreamer, exactly as the real on_message dispatch does).
+    from cclark.main import _send_regular_verbose_card
+    from types import SimpleNamespace
+
+    for text in ["chunk one", "chunk two", "chunk three"]:
+        await _send_regular_verbose_card(
+            adapter,
+            channel_id,
+            [SimpleNamespace(text=text, role="assistant", content_type="text")],
+            provider="claude",
+        )
+
+    # Exactly ONE output card should have been created
+    assert len(adapter._client.sent_cards) == 1
+    # Two patches: second and third chunks patch the card created by the first
+    assert len(adapter._client.patched_cards) == 2
+
+
+@pytest.mark.asyncio
+async def test_new_streamer_reads_turn_index_from_state_same_turn() -> None:
+    """A new VerboseCardStreamer must read turn_index from shared state.
+
+    This is the core fix: VerboseCardStreamer.__init__ now initializes
+    _turn_index from state.turn_state(user_id).last_turn_index instead of -1.
+    This means a new streamer in the same turn sees turn_index=N (not -1),
+    so push(turn_index=N) does NOT trigger an immediate flush.
+    """
+    channel_id = "feishu:oc_new_streamer:"
+    reset_channel_state(channel_id)
+    get_verbose_state(channel_id)._verbose_enabled = True
+    # advance_turn_index: last_turn_index goes from -1 (initial) to 0
+    advance_turn_index(channel_id)
+
+    from cclark.cards.streaming import VerboseCardStreamer
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+            self.patched: list[str] = []
+
+        async def send_interactive_card(self, chat_id: str, card: str) -> str:
+            self.sent.append(card)
+            return f"om_{len(self.sent)}"
+
+        async def patch_message(self, msg_id: str, card: str) -> None:
+            self.patched.append(msg_id)
+
+    fc = _FakeClient()
+
+    # VerboseCardStreamer takes the FeishuClient directly (adapter._client)
+    # First streamer: push text, flush → creates card
+    streamer1 = VerboseCardStreamer(fc, channel_id, "__channel__", "claude")
+    # After fix: _turn_index = state.turn_state(_CHANNEL_TURN_KEY).last_turn_index = 0
+    assert streamer1._turn_index == 0, (
+        "Streamer must read turn_index from state (0), not default to -1"
+    )
+    await streamer1.push("first", turn_index=0)
+    await streamer1.flush()
+
+    assert len(fc.sent) == 1, "First streamer must create a card"
+    # send_interactive_card returns "om_1", not the card JSON
+    card_id = "om_1"
+
+    # Second streamer (simulating a new on_message call): turn_index should also be 0
+    streamer2 = VerboseCardStreamer(fc, channel_id, "__channel__", "claude")
+    assert streamer2._turn_index == 0, (
+        "New streamer in same turn must also read turn_index=0 from state"
+    )
+
+    # push with same turn_index → no flush (turn_index unchanged), accumulates
+    await streamer2.push("second", turn_index=0)
+    await streamer2.flush()
+
+    # Only ONE card should have been created; second streamer patched it
+    assert len(fc.sent) == 1, f"Only one card should be created, got {len(fc.sent)}"
+    assert card_id in fc.patched, (
+        f"Card {card_id} should be patched by second streamer, patched: {fc.patched}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_new_turn_creates_new_card() -> None:
+    """advance_turn_index must create a fresh card for the new turn."""
+    channel_id = "feishu:oc_new_turn_card:"
+    reset_channel_state(channel_id)
+    get_verbose_state(channel_id)._verbose_enabled = True
+
+    adapter = _FakeAdapter()
+    from cclark.main import _send_regular_verbose_card
+    from types import SimpleNamespace
+
+    advance_turn_index(channel_id)
+    await _send_regular_verbose_card(
+        adapter,
+        channel_id,
+        [SimpleNamespace(text="turn 0", role="assistant", content_type="text")],
+        provider="claude",
+    )
+
+    advance_turn_index(channel_id)
+    await _send_regular_verbose_card(
+        adapter,
+        channel_id,
+        [SimpleNamespace(text="turn 1", role="assistant", content_type="text")],
+        provider="claude",
+    )
+
+    # Two cards: one per turn
+    assert len(adapter._client.sent_cards) == 2
+    assert adapter._client.patched_cards == []
+

@@ -1,4 +1,9 @@
-"""Screenshot capture handler — captures pane and sends as a Feishu image."""
+"""Screenshot capture handler — captures the tmux pane and sends it as a Feishu image.
+
+The pipeline is: gateway.capture_screenshot -> raw PNG bytes ->
+FeishuAdapter.send_image -> FeishuClient.upload_image -> Feishu send message (type=image).
+No intermediate file is written to disk.
+"""
 
 from __future__ import annotations
 

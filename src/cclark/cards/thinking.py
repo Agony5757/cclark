@@ -1,9 +1,13 @@
-"""Thinking 卡片流 — 增量更新飞书交互卡片以显示 thinking 进度。
+"""Thinking card streamer — incrementally updates a Feishu interactive card to show thinking progress.
 
-生命周期：
-  is_complete=False + 无卡 → 创建新卡片
-  is_complete=False + 有卡 → patch 更新内容
-  is_complete=True         → patch 终态（去掉 spinner）
+Lifecycle:
+  is_complete=False + no card  → create new card
+  is_complete=False + card exists → patch update
+  is_complete=True              → patch final state (remove spinner)
+
+In verbose-off mode (placeholder_only=True) the card shows placeholder text
+("Thinking..." / "Thinking...OK!") and discards actual thinking content.
+In verbose-on mode it streams real thinking text until is_complete=True.
 """
 
 from __future__ import annotations
@@ -33,13 +37,16 @@ def _truncate(text: str) -> str:
 
 
 class ThinkingCardStreamer:
-    """管理单个 channel 的 thinking 卡片生命周期。
+    """Manages the incremental thinking card lifecycle for one Feishu channel.
+
+    When placeholder_only is True, the card shows placeholder text and discards
+    actual thinking content. Otherwise it streams the real content, updating
+    the card in-place until is_complete=True.
 
     Args:
-        adapter: FeishuAdapter 实例
-        channel_id: 飞书 channel ID
-        placeholder_only: 为 True 时卡片只显示占位符（thinking... / thinking...OK!），
-                          丢弃实际 thinking 内容
+        adapter: FeishuAdapter (must expose _client).
+        channel_id: Feishu channel ID.
+        placeholder_only: If True, render placeholders only (verbose=off mode).
     """
 
     def __init__(self, adapter, channel_id: str, *, placeholder_only: bool = False) -> None:
@@ -58,10 +65,10 @@ class ThinkingCardStreamer:
         self._state.streaming_thinking_card_id = value
 
     def _build_card(self, text: str, done: bool = False) -> dict:
-        """构建 Feishu 交互卡片 JSON。
+        """Build the Feishu interactive card dict for the current thinking state.
 
-        - placeholder_only=True: 始终只显示占位符（🤔 Thinking... / 🤔 Thinking...OK!）
-        - done=False: 追加 ⏳ Generating... 提示
+        When placeholder_only=True, always renders placeholder text.
+        When done=False, appends an in-progress indicator.
         """
         if self._placeholder_only:
             content = "🤔 Thinking...OK!" if done else "🤔 Thinking..."
@@ -108,7 +115,12 @@ class ThinkingCardStreamer:
             self._card_id = msg_id
 
     async def push_thinking(self, text: str, *, is_complete: bool) -> None:
-        """推送一段 thinking 文本。"""
+        """Push a thinking text segment, creating or patching the card as needed.
+
+        Args:
+            text: Cleaned thinking text (markers already stripped).
+            is_complete: If True, marks the thinking done and stops updating.
+        """
         if not text:
             return
         self._state.streaming_thinking_text = text
@@ -135,11 +147,14 @@ class ThinkingCardStreamer:
             )
 
         if is_complete:
-            self.reset()
+            self._state.streaming_thinking_text = ""
+            self._state.streaming_thinking_active = False
+        else:
+            self._state.streaming_thinking_active = True
 
     async def finalize(self) -> None:
-        """Mark the current thinking card complete and stop updating it."""
-        if self._card_id is None:
+        """Patch the card to its final done state and mark streaming inactive."""
+        if self._card_id is None or not self._state.streaming_thinking_active:
             return
         card = self._build_card(
             self._state.streaming_thinking_text or "Done.",
@@ -150,8 +165,25 @@ class ThinkingCardStreamer:
             "ThinkingCard: finalized card %s channel=%s",
             self._card_id, self._channel_id,
         )
-        self.reset()
+        self._state.streaming_thinking_text = ""
+        self._state.streaming_thinking_active = False
 
     def reset(self) -> None:
+        """Clear all thinking streaming state for this channel."""
         self._state.streaming_thinking_card_id = None
         self._state.streaming_thinking_text = ""
+        self._state.streaming_thinking_active = False
+
+
+async def finalize_active_thinking_card(adapter, channel_id: str) -> None:
+    """Finalize the current thinking card using the channel's verbose mode."""
+    state = get_verbose_state(channel_id)
+    if state.streaming_thinking_card_id is None:
+        return
+
+    streamer = ThinkingCardStreamer(
+        adapter,
+        channel_id,
+        placeholder_only=not getattr(state, "_verbose_enabled", False),
+    )
+    await streamer.finalize()

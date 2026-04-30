@@ -37,6 +37,8 @@ class VerboseChannelState:
     """Feishu message_id of the in-progress thinking card."""
     streaming_thinking_text: str = ""
     """Latest visible thinking text for the in-progress thinking card."""
+    streaming_thinking_active: bool = False
+    """Whether the current turn still has an active thinking stream."""
     _verbose_enabled: bool = False
     """Per-channel verbose mode. Defaults to False (thinking hidden)."""
 
@@ -56,6 +58,7 @@ class VerboseChannelState:
             },
             "streaming_thinking_card_id": self.streaming_thinking_card_id,
             "streaming_thinking_text": self.streaming_thinking_text,
+            "streaming_thinking_active": self.streaming_thinking_active,
             "_verbose_enabled": self._verbose_enabled,
         }
 
@@ -66,6 +69,7 @@ class VerboseChannelState:
             last_flush_ms=data.get("last_flush_ms", 0),
             streaming_thinking_card_id=data.get("streaming_thinking_card_id"),
             streaming_thinking_text=data.get("streaming_thinking_text", ""),
+            streaming_thinking_active=data.get("streaming_thinking_active", False),
             _verbose_enabled=data.get("_verbose_enabled", False),
         )
         for uid, ts_data in data.get("turn_states", {}).items():
@@ -93,10 +97,12 @@ _CHANNEL_TURN_KEY = "__channel_turn__"
 
 
 def get_verbose_state(channel_id: str) -> VerboseChannelState:
+    """Get (or create) the verbose/streaming state for a channel."""
     return _verbose_states.setdefault(channel_id, VerboseChannelState())
 
 
 def get_toolbar_state(channel_id: str) -> ToolbarState:
+    """Get (or create) the toolbar state for a channel."""
     return _toolbar_states.setdefault(channel_id, ToolbarState())
 
 
@@ -112,6 +118,7 @@ def advance_turn_index(channel_id: str) -> int:
     state.streaming_card_id = None
     state.streaming_thinking_card_id = None
     state.streaming_thinking_text = ""
+    state.streaming_thinking_active = False
     state.last_flush_ms = 0
     ts = state.turn_state(_CHANNEL_TURN_KEY)
     ts.last_turn_index += 1
@@ -131,6 +138,7 @@ def reset_channel_state_keep_verbose(channel_id: str) -> None:
         vs.streaming_card_id = None
         vs.streaming_thinking_card_id = None
         vs.streaming_thinking_text = ""
+        vs.streaming_thinking_active = False
         vs.last_flush_ms = 0
         vs.turn_states.clear()
     _toolbar_states.pop(channel_id, None)

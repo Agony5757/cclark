@@ -15,7 +15,16 @@ def build_permission_card(
     options: list[dict[str, str]] | None = None,
     cancel_text: str = "Cancel",
 ) -> str:
-    """Build a permission/approval request card."""
+    """Build a Feishu interactive card for a permission/approval request.
+
+    Args:
+        title: Card header title.
+        body: Markdown body describing the permission being requested.
+        options: Optional custom approve/deny button list; defaults to standard pair.
+        cancel_text: Label for the cancel button (default "Cancel").
+    Returns:
+        Serialized JSON string.
+    """
     prompt = InteractivePrompt(
         prompt_type="permission",
         title=title,
@@ -41,7 +50,16 @@ def build_question_card(
     options: list[dict[str, str]],
     cancel_text: str = "Cancel",
 ) -> str:
-    """Build a multi-choice question card."""
+    """Build a Feishu interactive card for a multi-choice question prompt.
+
+    Args:
+        title: Card header title.
+        question: Markdown body with the question text.
+        options: List of {label, value} dicts for each choice button.
+        cancel_text: Label for the cancel button.
+    Returns:
+        Serialized JSON string.
+    """
     prompt = InteractivePrompt(
         prompt_type="question",
         title=title,
@@ -61,6 +79,7 @@ def build_question_card(
 
 
 def _prompt_to_card(prompt: InteractivePrompt) -> dict[str, Any]:
+    """Build the internal card dict (without header) from an InteractivePrompt."""
     buttons: list[dict[str, Any]] = []
     for option in prompt.options:
         value = f"prompt:{prompt.prompt_type}:{option['value']}"

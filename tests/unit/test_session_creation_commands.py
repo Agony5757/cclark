@@ -1,16 +1,36 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 
+from cclark.cards.thinking import ThinkingCardStreamer
 from cclark.event_parsers import FeishuMessageEvent
 from cclark.handlers import message, session_creation
+from cclark.state import get_verbose_state, reset_channel_state
+
+
+class _FakeClient:
+    def __init__(self) -> None:
+        self.sent_cards: list[tuple[str, str]] = []
+        self.patched_cards: list[tuple[str, str]] = []
+
+    async def send_interactive_card(self, chat_id: str, card_json: str) -> str:
+        self.sent_cards.append((chat_id, card_json))
+        return f"om_card_{len(self.sent_cards)}"
+
+    async def patch_message(self, message_id: str, card_json: str) -> None:
+        self.patched_cards.append((message_id, card_json))
 
 
 class _FakeAdapter:
     def __init__(self) -> None:
+        self._client = _FakeClient()
         self.sent_text: list[tuple[str, str]] = []
+
+    async def send_interactive_card(self, channel_id: str, card_json: str) -> str:
+        return await self._client.send_interactive_card(channel_id, card_json)
 
     async def send_text(self, channel_id: str, text: str) -> str:
         self.sent_text.append((channel_id, text))
@@ -155,6 +175,66 @@ async def test_plan_option_three_waits_for_feedback(
     await message.handle_message(_event("一个 README 里面包括测试的结论"))
 
     assert gateway.sent_to_window == [("@42", "一个 README 里面包括测试的结论")]
+
+
+@pytest.mark.asyncio
+async def test_new_turn_clears_thinking_card(
+    fake_runtime: tuple[_FakeAdapter, _FakeGateway],
+) -> None:
+    adapter, gateway = fake_runtime
+    gateway.window_id = "@42"
+    channel_id = "feishu:oc_test"
+    reset_channel_state(channel_id)
+    get_verbose_state(channel_id)._verbose_enabled = False
+
+    streamer = ThinkingCardStreamer(adapter, channel_id, placeholder_only=True)
+    await streamer.push_thinking("private reasoning", is_complete=False)
+
+    assert len(adapter._client.sent_cards) == 1
+    old_card_id = get_verbose_state(channel_id).streaming_thinking_card_id
+    assert old_card_id == "om_card_1"
+
+    await message.handle_message(_event("继续"))
+
+    assert gateway.sent_to_window == [("@42", "继续")]
+    assert get_verbose_state(channel_id).streaming_thinking_card_id is None
+    assert adapter._client.patched_cards[0][0] == old_card_id
+    finalized_old_card = json.loads(adapter._client.patched_cards[0][1])
+    assert finalized_old_card["elements"][0]["content"] == "🤔 Thinking...OK!"
+
+    next_streamer = ThinkingCardStreamer(adapter, channel_id, placeholder_only=True)
+    await next_streamer.push_thinking("next turn", is_complete=False)
+
+    assert len(adapter._client.sent_cards) == 2
+    assert get_verbose_state(channel_id).streaming_thinking_card_id == "om_card_2"
+
+
+@pytest.mark.asyncio
+async def test_multiple_turns_one_thinking_card_visible(
+    fake_runtime: tuple[_FakeAdapter, _FakeGateway],
+) -> None:
+    adapter, gateway = fake_runtime
+    gateway.window_id = "@42"
+    channel_id = "feishu:oc_test"
+    reset_channel_state(channel_id)
+    get_verbose_state(channel_id)._verbose_enabled = False
+
+    streamer = ThinkingCardStreamer(adapter, channel_id, placeholder_only=True)
+    await streamer.push_thinking("turn 0", is_complete=False)
+    await message.handle_message(_event("turn 1"))
+
+    await streamer.push_thinking("turn 1", is_complete=False)
+    await message.handle_message(_event("turn 2"))
+
+    await streamer.push_thinking("turn 2", is_complete=False)
+
+    state = get_verbose_state(channel_id)
+    assert len(adapter._client.sent_cards) == 3
+    assert [card_id for card_id, _ in adapter._client.patched_cards] == [
+        "om_card_1",
+        "om_card_2",
+    ]
+    assert state.streaming_thinking_card_id == "om_card_3"
 
 
 def test_status_panel_is_not_terminal_prompt() -> None:

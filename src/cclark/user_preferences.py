@@ -41,12 +41,15 @@ class UserPreferences:
     # ── Directory favorites ─────────────────────────────────────────────────
 
     def get_user_starred(self, user_id: str) -> list[str]:
+        """Return the list of starred directory paths for a user."""
         return list(self.user_dir_favorites.get(user_id, {}).get("starred", []))
 
     def get_user_mru(self, user_id: str) -> list[str]:
+        """Return the most-recently-used directory paths for a user."""
         return list(self.user_dir_favorites.get(user_id, {}).get("mru", []))
 
     def update_user_mru(self, user_id: str, path: str) -> None:
+        """Record a directory as most-recently-used, keeping at most 5 entries."""
         resolved = str(Path(path).resolve())
         favs = self.user_dir_favorites.setdefault(user_id, {})
         mru: list[str] = favs.get("mru", [])
@@ -54,6 +57,7 @@ class UserPreferences:
         favs["mru"] = mru[:5]
 
     def toggle_user_star(self, user_id: str, path: str) -> bool:
+        """Toggle the starred flag on a directory. Returns True if now starred."""
         resolved = str(Path(path).resolve())
         favs = self.user_dir_favorites.setdefault(user_id, {})
         starred: list[str] = favs.get("starred", [])
@@ -69,14 +73,17 @@ class UserPreferences:
     # ── Read offsets ───────────────────────────────────────────────────────
 
     def get_user_window_offset(self, user_id: str, window_id: str) -> int | None:
+        """Return the transcript byte offset for a user's view of a window, or None."""
         return self.user_window_offsets.get(user_id, {}).get(window_id)
 
     def update_user_window_offset(
         self, user_id: str, window_id: str, offset: int
     ) -> None:
+        """Record the transcript byte offset for a user's view of a window."""
         self.user_window_offsets.setdefault(user_id, {})[window_id] = offset
 
     def reset(self) -> None:
+        """Clear all per-user favorites and window offsets."""
         self.user_dir_favorites.clear()
         self.user_window_offsets.clear()
 

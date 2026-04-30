@@ -43,7 +43,7 @@ _feishu_clients: dict[str, FeishuClient] = {}
 
 
 def get_adapter_for_channel(channel_id: str) -> FeishuAdapter | None:
-    """Look up the right FeishuAdapter for a channel_id (multi-app routing)."""
+    """Return the FeishuAdapter for the app owning a channel (multi-app routing)."""
     if _app_adapters:
         # Multi-app: route by app name in channel_id
         app_name = config.app_name_for_channel(channel_id)
@@ -61,12 +61,12 @@ _EXP_END = "\x02EXPQUOTE_END\x02"
 
 
 def _clean_text(raw: str) -> str:
-    """Strip all STX chars and EXPQUOTE markers from raw text."""
+    """Strip STX bytes and EXPQUOTE markers from raw terminal text."""
     return raw.replace(_EXP_START, "").replace(_EXP_END, "").replace(STX, "")
 
 
 def _trim_terminal_panel_body(raw: str) -> str:
-    """Keep the current terminal panel instead of older prompt history."""
+    """Trim to the last visible terminal panel, discarding older prompt history."""
     body = raw.strip()
     if not body:
         return body
@@ -81,12 +81,12 @@ def _trim_terminal_panel_body(raw: str) -> str:
 
 
 def _should_auto_dismiss_terminal_panel(body: str) -> bool:
-    """Return True for non-actionable Claude modals that block later input."""
+    """Return True for non-actionable modal overlays that block terminal input."""
     return "Esc to cancel" in body or "Esc cancel" in body
 
 
 async def _auto_dismiss_terminal_panel(gateway: UnifiedICC, window_id: str, body: str) -> None:
-    """Dismiss a captured non-actionable terminal panel."""
+    """Dismiss a non-actionable terminal modal by sending Escape key(s)."""
     await gateway.send_key(window_id, "Escape")
     if "Esc cancel" in body and "Esc to cancel" not in body:
         await asyncio.sleep(0.2)
@@ -94,7 +94,7 @@ async def _auto_dismiss_terminal_panel(gateway: UnifiedICC, window_id: str, body
 
 
 def _looks_like_thinking(m: Any) -> bool:
-    """Return True for messages that must be handled only by thinking cards."""
+    """Return True for messages that belong in the thinking card stream."""
     ct = getattr(m, "content_type", "text") or "text"
     if ct == "thinking":
         return True
@@ -103,7 +103,7 @@ def _looks_like_thinking(m: Any) -> bool:
 
 
 def _split_messages(messages: list[Any]) -> tuple[list[Any], list[Any]]:
-    """Split messages into thinking vs non-thinking lists."""
+    """Split a message list into (thinking_messages, regular_messages)."""
     thinking, regular = [], []
     for m in messages:
         if getattr(m, "role", "") == "user":
@@ -116,7 +116,7 @@ def _split_messages(messages: list[Any]) -> tuple[list[Any], list[Any]]:
 
 
 async def _send_regular_text(adapter, channel_id: str, regular_msgs: list[Any]) -> None:
-    """Send non-thinking messages as plain text."""
+    """Send non-thinking agent messages as plain Feishu text."""
     combined = "\n".join(
         _clean_text(getattr(m, "text", "") or "")
         for m in regular_msgs
@@ -136,7 +136,7 @@ async def _send_regular_verbose_card(
     *,
     provider: str = "",
 ) -> None:
-    """Send non-thinking messages through the verbose streaming card."""
+    """Send non-thinking messages through the debounced VerboseCardStreamer."""
     combined = "\n".join(
         _clean_text(getattr(m, "text", "") or "")
         for m in regular_msgs
@@ -162,11 +162,10 @@ async def _send_regular_verbose_card(
 
 
 async def _handle_thinking(adapter, channel_id: str, thinking_msgs: list[Any], verbose_on: bool) -> None:
-    """Handle thinking messages for a channel.
+    """Route thinking messages through the ThinkingCardStreamer.
 
-    - verbose_on=True:  显示实际 thinking 内容（ThinkingCardStreamer，灰色卡片）
-    - verbose_on=False: 显示占位符 🤔 Thinking... → 🤔 Thinking...OK!
-                        （同样是灰色卡片，但丢弃实际内容）
+    When verbose_on is True, renders actual thinking content in a grey card.
+    When False, renders placeholder text and discards the actual content.
     """
     if not thinking_msgs:
         return
@@ -183,12 +182,11 @@ async def _handle_thinking(adapter, channel_id: str, thinking_msgs: list[Any], v
 
 
 async def _finalize_thinking(adapter, channel_id: str) -> None:
-    """Finish any active thinking card before output or prompt cards begin."""
-    from cclark.cards.thinking import ThinkingCardStreamer
+    """Finalize and close the active thinking card before regular output begins."""
+    from cclark.cards.thinking import finalize_active_thinking_card
 
-    streamer = ThinkingCardStreamer(adapter, channel_id)
     try:
-        await streamer.finalize()
+        await finalize_active_thinking_card(adapter, channel_id)
     except Exception:
         logger.exception("ThinkingCardStreamer finalize failed channel=%s", channel_id)
 
@@ -199,7 +197,7 @@ async def _dispatch_channel_messages(
     _session_id: str,
     _gateway: UnifiedICC,
 ) -> None:
-    """Dispatch messages to one channel, respecting verbose mode and content types."""
+    """Route agent messages to one Feishu channel, splitting and streaming by content type."""
     adapter = get_adapter_for_channel(channel_id)
     if adapter is None:
         logger.warning("No adapter for channel %s", channel_id)
@@ -391,6 +389,7 @@ async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR091
 
 
 def _build_adapter(app: AppConfig) -> FeishuAdapter:
+    """Create a FeishuClient and FeishuAdapter for one app config, and register both."""
     client = FeishuClient(app.app_id, app.app_secret)
     _feishu_clients[app.name] = client
     adapter = FeishuAdapter(client)

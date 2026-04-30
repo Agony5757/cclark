@@ -117,18 +117,7 @@ VerboseCardStreamer 创建重复卡片
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 飞书强制每张卡片最大约 30 KB。请减少 ``cards/streaming.py`` 中的 ``_MAX_CHARS_PER_FLUSH``
-或在对智能体转录本推送到流式器前截断长输出。
-
-回调注册冲突
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-如果看到 ``ValueError: Callback prefix 'prov:' already registered``，
-说明两个模块注册了相同前缀。修复方法：仅在 ``handlers/callback.py`` 中注册通配前缀
-（``DB``、``PROV``、``MODE``、``TB``）—— 具体前缀
-（``db:sel:``、``prov:claude`` 等）由各子处理器直接注册。
-
-tmux 连接
--------------
+或在对智能体转录本推送到流式器前截断长输出。-------------
 
 "Session 'default' not found"
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from cclark.cards.thinking import ThinkingCardStreamer
+from cclark.cards.thinking import ThinkingCardStreamer, finalize_active_thinking_card
 from cclark.feishu_client import FeishuClient
-from cclark.state import reset_channel_state
+from cclark.state import get_verbose_state, reset_channel_state
 
 
 def _make_streamer(*, placeholder_only: bool = False) -> ThinkingCardStreamer:
@@ -47,22 +47,51 @@ async def test_patch_message_uses_http_patch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_completed_thinking_card_resets_active_card() -> None:
+async def test_completed_thinking_card_marks_card_inactive_for_same_turn_reuse() -> None:
     streamer = _make_streamer()
 
     await streamer.push_thinking("done", is_complete=True)
 
-    assert streamer._state.streaming_thinking_card_id is None
+    assert streamer._state.streaming_thinking_card_id == "om_card"
     assert streamer._state.streaming_thinking_text == ""
+    assert streamer._state.streaming_thinking_active is False
 
 
 @pytest.mark.asyncio
-async def test_finalize_patches_active_card_and_resets_state() -> None:
+async def test_finalize_patches_active_card_and_marks_state_inactive() -> None:
     streamer = _make_streamer()
 
     await streamer.push_thinking("working", is_complete=False)
     await streamer.finalize()
 
     streamer._client.patch_message.assert_awaited_once()
-    assert streamer._state.streaming_thinking_card_id is None
+    assert streamer._state.streaming_thinking_card_id == "om_card"
     assert streamer._state.streaming_thinking_text == ""
+    assert streamer._state.streaming_thinking_active is False
+
+
+@pytest.mark.asyncio
+async def test_same_turn_finalize_reuses_existing_thinking_card() -> None:
+    streamer = _make_streamer()
+
+    await streamer.push_thinking("first", is_complete=False)
+    await streamer.finalize()
+    await streamer.push_thinking("second", is_complete=False)
+
+    streamer._adapter.send_interactive_card.assert_awaited_once()
+    assert streamer._client.patch_message.await_count == 2
+    assert streamer._state.streaming_thinking_card_id == "om_card"
+    assert streamer._state.streaming_thinking_active is True
+
+
+@pytest.mark.asyncio
+async def test_finalize_active_thinking_card_respects_placeholder_mode() -> None:
+    streamer = _make_streamer(placeholder_only=True)
+    get_verbose_state("feishu:oc_test_chat")._verbose_enabled = False
+
+    await streamer.push_thinking("secret reasoning", is_complete=False)
+    await finalize_active_thinking_card(streamer._adapter, "feishu:oc_test_chat")
+
+    _, card_json = streamer._client.patch_message.await_args.args
+    card = json.loads(card_json)
+    assert card["elements"][0]["content"] == "🤔 Thinking...OK!"

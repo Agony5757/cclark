@@ -106,14 +106,3 @@ VerboseCardStreamer 使用 ``get_verbose_state`` 来：
    → push 添加到新 _pending
    → 下次刷新 → 新卡片通过 send_interactive_card() 发送
 
-工具栏更新（patch 已有工具栏）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-::
-
-   toolbar.show_toolbar(channel_id, window_id, adapter)
-   → get_toolbar_state(channel_id) → ToolbarState(...)
-   → toolbar_state.toolbar_card_id 已设置?
-       → client.patch_message(card_id, card_json)
-           → 工具栏卡片就地更新
-   → 否则：adapter.send_interactive_card(...) → toolbar_card_id 被存储

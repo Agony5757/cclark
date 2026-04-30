@@ -144,7 +144,14 @@ class FeishuClient:
     async def send_image(
         self, receive_id: str, image_key: str
     ) -> str:
-        """Send an image message using an already-uploaded image_key."""
+        """Send an image message using an already-uploaded image_key.
+
+        Args:
+            receive_id: Feishu chat_id.
+            image_key: Image key from a prior upload_image call.
+        Returns:
+            The sent message_id.
+    """
         return await self.send_message(
             receive_id, "image", json.dumps({"image_key": image_key})
         )
@@ -152,13 +159,26 @@ class FeishuClient:
     async def send_file(
         self, receive_id: str, file_key: str, file_name: str
     ) -> str:
-        """Send a file message using an already-uploaded file_key."""
+        """Send a file message using an already-uploaded file_key.
+
+        Args:
+            receive_id: Feishu chat_id.
+            file_key: File key from a prior upload_file call.
+            file_name: Display name for the file.
+        Returns:
+            The sent message_id.
+    """
         return await self.send_message(
             receive_id, "file", json.dumps({"file_key": file_key, "file_name": file_name})
         )
 
     async def patch_message(self, message_id: str, card_json: str) -> None:
-        """Patch an existing interactive card message."""
+        """Patch an existing interactive card message (in-place update).
+
+        Args:
+            message_id: The Feishu message_id of the card to patch.
+            card_json: JSON string of the updated card payload.
+        """
         if isinstance(card_json, dict):
             card_json = json.dumps(card_json)
         await self._patch(
@@ -169,7 +189,14 @@ class FeishuClient:
     # ── Media upload ────────────────────────────────────────────────────
 
     async def upload_image(self, image_bytes: bytes, image_name: str = "image.png") -> str:
-        """Upload an image. Returns image_key."""
+        """Upload an image to Feishu.
+
+        Args:
+            image_bytes: Raw PNG/JPEG bytes.
+            image_name: File name hint (default "image.png").
+        Returns:
+            Feishu image_key to use with send_image.
+        """
         body = await self._post(
             "/im/v1/images",
             data={"image_type": "message"},
@@ -185,7 +212,15 @@ class FeishuClient:
         file_name: str,
         file_type: str = "stream_file",
     ) -> str:
-        """Upload a file. Returns file_key."""
+        """Upload a file to Feishu.
+
+        Args:
+            file_bytes: Raw file bytes.
+            file_name: File name for the upload.
+            file_type: Feishu file type (default "stream_file").
+        Returns:
+            Feishu file_key to use with send_file.
+        """
         body = await self._post(
             "/im/v1/files",
             data={"file_name": file_name, "file_type": file_type},
@@ -204,7 +239,16 @@ class FeishuClient:
         content: str | dict,
         parent_id: str,
     ) -> str:
-        """Reply to a message in a thread."""
+        """Reply to a specific message in a Feishu thread.
+
+        Args:
+            receive_id: Feishu chat_id.
+            msg_type: Message type ("text", "interactive", etc.).
+            content: Message content (string or dict, JSON-encoded).
+            parent_id: message_id of the message to reply to.
+        Returns:
+            The sent message_id.
+        """
         if isinstance(content, dict):
             content = json.dumps(content)
         body = await self._post(

@@ -33,7 +33,7 @@ _MAX_CODE_BLOCK = 2000  # Truncate code blocks above this
 
 
 class FeishuCardBuilder:
-    """Builds Feishu interactive card JSON from CardPayload / InteractivePrompt."""
+    """Static utilities for building Feishu interactive card JSON from gateway payload types."""
 
     @staticmethod
     def _header_color(color: str) -> str:

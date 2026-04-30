@@ -12,7 +12,7 @@ import time
 import structlog
 
 from cclark.config import config
-from cclark.state import get_verbose_state
+from cclark.state import _CHANNEL_TURN_KEY, get_verbose_state
 from cclark.feishu_client import FeishuClient
 
 logger = structlog.get_logger()
@@ -24,7 +24,12 @@ _MAX_CARD_SIZE = 30 * 1024
 
 
 class VerboseCardStreamer:
-    """Debounced card streamer for agent output in a Feishu channel."""
+    """Debounced card streamer for agent output in a Feishu channel.
+
+    Buffers incoming text segments and flushes them as a single Feishu card
+    every 2.5 seconds or when the buffer exceeds size limits. One streaming
+    card per channel per agent turn.
+    """
 
     def __init__(
         self,
@@ -38,7 +43,7 @@ class VerboseCardStreamer:
         self._user_id = user_id
         self._provider = provider
         self._state = get_verbose_state(channel_id)
-        self._turn_index = -1
+        self._turn_index = self._state.turn_state(_CHANNEL_TURN_KEY).last_turn_index
         self._pending: list[str] = []
         self._pending_chars = 0
 
@@ -111,6 +116,7 @@ class VerboseCardStreamer:
         self._turn_index = -1
 
     def _build_card(self, text: str) -> str:
+        """Build a Feishu card JSON string from accumulated output text."""
         if len(text) > _MAX_CARD_SIZE - 2000:
             text = text[: _MAX_CARD_SIZE - 2000] + "\n... (output truncated)"
         # Basic markdown-lite rendering

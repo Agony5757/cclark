@@ -126,7 +126,7 @@ cards/streaming — VerboseCardStreamer
 
 ::
 
-   handlers/callback 或 handlers/message → 取消绑定流程
+   handlers/message._handle_hash_new() → 取消绑定流程
    → state.reset_channel_state(channel_id)
        → _verbose_states.pop(channel_id)
        → _toolbar_states.pop(channel_id)

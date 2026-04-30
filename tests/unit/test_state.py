@@ -125,7 +125,9 @@ class TestGlobalStateFunctions:
         reset_channel_state("feishu:thinking-turn")
         state = get_verbose_state("feishu:thinking-turn")
         state.streaming_thinking_card_id = "om_old_thinking"
+        state.streaming_thinking_active = True
 
         assert advance_turn_index("feishu:thinking-turn") == 0
 
         assert state.streaming_thinking_card_id is None
+        assert state.streaming_thinking_active is False

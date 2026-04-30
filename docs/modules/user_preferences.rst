@@ -1,5 +1,5 @@
-user_preferences — 用户收藏夹和读取偏移量
-===============================================
+user_preferences — 用户 MRU 目录和读取偏移量
+================================================
 
 源码：src/cclark/user_preferences.py
 
@@ -34,13 +34,17 @@ user_preferences — 用户收藏夹和读取偏移量
 
 .. code-block:: python
 
-   # 获取收藏目录
+   # 获取星标目录
    user_preferences.get_user_starred("ou_abc123")
    # → ["/home/user/projects/ai", "/home/user/dotfiles"]
 
    # 切换收藏状态
    user_preferences.toggle_user_star("ou_abc123", "/home/user/project")
    # → True（已收藏）/ False（已取消收藏）
+
+   # 获取最近使用目录
+   user_preferences.get_user_mru("ou_abc123")
+   # → ["/home/user/projects/api", "/home/user/projects/web"]
 
    # 更新 MRU（最近使用）— 在窗口创建后调用
    user_preferences.update_user_mru("ou_abc123", "/home/user/new-project")
@@ -50,21 +54,25 @@ user_preferences — 用户收藏夹和读取偏移量
 
 .. code-block:: python
 
-   user_preferences.get_user_window_offset("ou_abc123", "window_1")
+   user_preferences.get_user_window_offset("ou_abc123", "@0")
    # → 4821 （上一次看到的字节偏移）
 
-   user_preferences.update_user_window_offset("ou_abc123", "window_1", 5100)
+   user_preferences.update_user_window_offset("ou_abc123", "@0", 5100)
 
 注意：读取偏移量目前在处理器中尚未接入——它们存在
 是为了将来实现每个用户"从上次阅读位置继续"功能。
 
-序列化
--------------
+持久化
+------------
 
-``to_dict()`` 生成一个可用于网关状态文件 JSON 序列化的普通字典。键为用户 ID（str）。
+``to_dict()`` 生成一个可用于网关状态文件 JSON 序列化的普通字典。
+键为用户 ID（str）。
 
 ``from_dict(d)`` 从持久化数据恢复，不调用 ``_schedule_save``
-（与 ccgram 原始实现不同——从磁盘加载不应触发写入）。
+（从磁盘加载不应触发写入）。
+
+持久化由 ``unified_icc.window_state_store`` 通过
+``WindowStateStore`` 的序列化 pipeline 调用。
 
 调用栈
 -----------
@@ -74,24 +82,10 @@ user_preferences — 用户收藏夹和读取偏移量
 
 ::
 
-   session_creation._create_window(ctx, path, provider, mode)
-   → user_preferences.update_user_mru(ctx.user_id, path)
-       → resolved = str(Path(path).resolve())
-       → mru = favs.get("mru", [])  ["a", "b"]
+   session_creation._handle_browse()
+   → user_preferences.update_user_mru(event.user_id, current_path)
+       → resolved = str(Path(current_path).resolve())
+       → mru = favs.get("mru", [])
        → mru = [resolved] + [p for p in mru if p != resolved]
        → favs["mru"] = mru[:5]
-
-切换目录星标
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-::
-
-   session_creation.handle_dir_callback(ctx)
-   → ctx.value.startswith("db:star:")?
-   → dir_path = _dec(ctx.value[len("db:star:"):])
-   → user_preferences.toggle_user_star(ctx.user_id, dir_path)
-       → resolved = str(Path(dir_path).resolve())
-       → starred = favs.get("starred", [])
-       → resolved in starred? → 移除 → 返回 False
-       → 否则：追加 → 返回 True
-       → favs["starred"] = starred
+       → window_store._schedule_save()  [包含在 window_state_store.json 中]

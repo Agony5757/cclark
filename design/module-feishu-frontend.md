@@ -59,24 +59,30 @@ CCLARK_PROVIDER=claude
 ALLOWED_USERS=ou_xxxxxxx
 ```
 
-### 3.3 Webhook Event Flow
+### 3.3 WebSocket Event Flow (not Webhook)
+
+The webhook-based event flow is **not used**. All events arrive via the WebSocket
+long-connection in `ws_client.py`:
 
 ```
 Feishu Platform
     │
-    │  HTTP POST (event JSON)
+    │  wss://... (outbound WS connection)
     ▼
-FastAPI /webhook/event
+FeishuWSClient
     │
-    ├── Verify signature + decrypt
-    ├── Parse event type
+    ├── Protobuf frame decode
+    ├── Self-filter (skip own messages)
+    ├── Deduplicate event_id / message_id
+    ├── Authorization check
     │
-    ├── "im.message.receive_v1"  → message_handler
-    ├── "card.action.callback"   → callback_handler
+    ├── "im.message.receive_v1"  → parse_message_event → handle_message
     │
     ▼
 Gateway API call or card update
 ```
+
+See `design/module-ws-client.md` for the full protocol details.
 
 ## 4. Message Handler
 
@@ -289,94 +295,55 @@ This requires creating group chats programmatically (possible via Feishu API).
 
 ## 8. Callback Handling
 
-When a user clicks a card button, Feishu sends a callback to the webhook:
+Card button callbacks are **not wired** in the current implementation.
+Permission and plan prompts show numbered options; the user replies with the
+digit directly. See `design/module-cards.md` §8.5 for rationale.
 
-```python
-async def handle_card_callback(event: FeishuCardCallback):
-    action = event.action.value  # {"choice": "jwt"} or {"action": "allow"}
-    channel_id = f"feishu:{event.event_context.chat_id}"
-
-    if "choice" in action:
-        # AskUserQuestion response
-        await gateway.send_to_window(window_id, action["choice"])
-    elif action.get("action") == "allow":
-        # Permission granted
-        await gateway.send_key(window_id, "y")
-    elif action.get("action") == "deny":
-        # Permission denied
-        await gateway.send_key(window_id, "n")
-```
+The Feishu card button infrastructure (`build_prompt_card`, `build_permission_card`,
+etc.) is still built so it can be wired in a future iteration.
 
 ## 9. Session Creation Flow
 
 When a user sends the first message in an unbound thread:
 
+The wizard is entirely text-based (no Feishu card buttons):
+
 ```
 1. User: "fix the login bug"
     ↓
-2. cclark: Show directory browser card
-    ├── 📁 /home/user/
-    │   ├── projects/
-    │   ├── code/
-    │   └── ...
+2. cclark: Text listing of home directory + subdirectories
+    "New session setup: choose the workspace directory.
+     Current directory: /home/user/
+     Reply with a number or folder name..."
     ↓
-3. User clicks "projects/"
+3. User sends "1" (enter first subdirectory)
+    → _handle_browse: navigate, re-list new directory
     ↓
-4. cclark: Update card with subdirectories
-    ├── 📁 /home/user/projects/
-    │   ├── api/
-    │   ├── frontend/
-    │   └── ...
+   (User navigates with numbers, names, "..", #select <path>)
     ↓
-5. User clicks "api/"
+4. User sends "ok"
+    → update_user_mru() → advance to provider phase
+    → send text: "Select provider:\n  1. claude  2. codex  3. gemini  4. pi  5. shell"
     ↓
-6. cclark: Show provider picker card
-    ├── 🟠 Claude Code
-    ├── 🧩 Codex CLI
-    ├── 🐚 Shell
-    └── ...
+5. User sends "1" (claude)
+    → advance to mode phase
+    → send text: "Select mode:\n  1. standard  2. yolo"
     ↓
-7. User clicks "Claude Code"
-    ↓
-8. cclark: Show mode picker card
-    ├── ✅ Standard
-    └── 🚀 YOLO
-    ↓
-9. User clicks "Standard"
-    ↓
-10. cclark:
-    - Create tmux window via gateway
-    - Bind channel → window
-    - Forward original message "fix the login bug"
+6. User sends "1" (standard)
+    → _create_window(channel_id, user_id, path, "claude", "standard")
+    → gateway.create_window(path, provider="claude", mode="standard")
+    → gateway.bind_channel(channel_id, window_id)
+    → window_store record + detect_session_id()
+    → forward original message "fix the login bug"
 ```
 
-## 10. Webhook Server
+## 10. Webhook Server (Not Used)
 
-```python
-from fastapi import FastAPI, Request
-
-app = FastAPI()
-
-@app.post("/webhook/event")
-async def event_handler(request: Request):
-    body = await request.json()
-    # Verify + decrypt
-    event = parse_event(body)
-
-    if event.type == "im.message.receive_v1":
-        await handle_feishu_message(event)
-    elif event.type == "url_verification":
-        return {"challenge": event.challenge}
-
-    return {"code": 0}
-
-@app.post("/webhook/card")
-async def card_callback_handler(request: Request):
-    body = await request.json()
-    event = parse_card_callback(body)
-    await handle_card_callback(event)
-    return {"code": 0}
-```
+The webhook server (FastAPI) is **not used** in the current implementation.
+All Feishu events arrive via the WebSocket long connection in `ws_client.py`.
+The `webhook.py` FastAPI app retains only the `GET /health` endpoint for
+load-balancer probes. See `design/module-ws-client.md` for the full WebSocket
+event path.
 
 ## 11. Dependencies
 
@@ -399,12 +366,14 @@ unifiedcc  # Local package
 
 | Aspect | ccgram (Telegram) | cclark (Feishu) |
 |---|---|---|
-| Message transport | Long polling (PTB) | Webhook (FastAPI) |
+| Message transport | Long polling (PTB) | WebSocket long-connection |
 | Rich UI | Inline keyboards | Interactive cards |
 | Message updates | `edit_message_text` | Card patch API |
+| Session creation | Card buttons | Text-based wizard |
+| Approval mechanism | Card button callbacks | Numbered text replies |
 | Max message size | 4096 chars | ~10000 chars (card) |
 | Thread model | Forum topics (built-in) | Message threads or groups |
 | Rate limits | 30/sec group | 5/sec app |
-| SDK style | Async-native (PTB) | Sync (lark-oapi) → wrap async |
+| SDK style | Async-native (PTB) | httpx async client |
 | File uploads | `send_document` | Upload API → `send_file` |
 | Voice | `send_voice` | Audio message handling |

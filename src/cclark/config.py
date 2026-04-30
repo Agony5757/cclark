@@ -80,6 +80,7 @@ class FeishuConfig:
     # ── YAML loading ─────────────────────────────────────────────────────────────
 
     def _load_yaml(self, path: Path) -> None:
+        """Parse config.yaml and populate self.apps with one AppConfig per entry."""
         import yaml  # type: ignore[import]
 
         with open(path) as f:
@@ -118,6 +119,7 @@ class FeishuConfig:
     # ── Env-var fallback (single-app, backward compat) ─────────────────────────
 
     def _load_from_env(self) -> None:
+        """Read FEISHU_APP_ID / FEISHU_APP_SECRET env vars and create a single default app."""
         app_id = os.getenv("FEISHU_APP_ID", "").strip()
         app_secret = os.getenv("FEISHU_APP_SECRET", "").strip()
         if not app_id or not app_secret:

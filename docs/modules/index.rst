@@ -11,11 +11,8 @@
    adapter
    webhook
    event_parsers
-   callback_registry
-   callback_data
    state
    user_preferences
-   toolbar_config
    handlers
    cards/index
    main

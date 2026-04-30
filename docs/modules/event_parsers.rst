@@ -1,46 +1,37 @@
-event_parsers — 飞书 JSON → 类型化事件
-==========================================
+event_parsers — 飞书 JSON → FeishuMessageEvent
+==================================================
 
 源码：src/cclark/event_parsers.py
 
-将原始飞书 Webhook JSON 负载转换为类型化 Python 数据类。
-三种事件类型：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - 类型
-     - 来源
-   * - ``FeishuMessageEvent``
-     - ``im.message.receive_v1`` 事件负载
-   * - ``FeishuCallbackEvent``
-     - 卡片按钮点击回调负载
-   * - ``FeishuURLVerificationEvent``
-     - Webhook URL 验证挑战
+将原始飞书 WebSocket 事件 JSON 负载转换为类型化 Python 数据类。
 
 ``FeishuMessageEvent``
 -----------------------
 
 .. code-block:: python
 
-   @dataclass(frozen=True)
+   @dataclass
    class FeishuMessageEvent:
        chat_id: str       # "oc_xxxx"
        thread_id: str     # 非话题聊天时为 ""
        user_id: str       # 发送者的飞书 open_id
        text: str          # 去空格后的文本内容
        message_id: str     # 用于回复话题
-       msg_type: str      # "text"、"image" 等
+       msg_type: str      # "text"（当前仅处理文本）
+       app_name: str      # 多 app 模式下来源 app 名称
 
-``parse_message_event`` 解析逻辑：
+``parse_message_event`` 解析逻辑
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
-   payload = {"event": {"chat_id": "...", "thread_id": "...",
-                        "sender": {"sender_id": {"open_id": "..."}},
-                        "message": {"msg_type": "text", "message_id": "...",
-                                   "content": "{\"text\": \"...\"}"}}}
+   payload = {"event": {
+       "chat_id": "...",
+       "thread_id": "...",
+       "sender": {"sender_id": {"open_id": "..."}},
+       "message": {"msg_type": "text", "message_id": "...",
+                   "content": "{\"text\": \"...\"}"}
+   }}
    ↓ 提取 event、sender、message
    ↓ msg_type != "text"? → 返回 None  [仅处理文本]
    ↓ json.loads(content) → {"text": "..."}
@@ -51,54 +42,27 @@ event_parsers — 飞书 JSON → 类型化事件
 飞书文本消息的 JSON ``content`` 字段本身又是一个 JSON 字符串，
 所以需要双重解析。
 
-``FeishuCallbackEvent``
------------------------
+支持的飞书事件 schema 版本
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: python
+Feishu 平台在 1.0 和 2.0 版本间演进：
 
-   @dataclass(frozen=True)
-   class FeishuCallbackEvent:
-       chat_id: str
-       user_id: str       # 点击用户的 open_id
-       action_value: str  # "db:sel:/path"、"tb:window:mode" 等
-       message_id: str     # 被点击的卡片消息 ID
-       token: str         # 验证令牌
-       thread_id: str = ""
+===============  =============  ================
+字段              Schema 1.0     Schema 2.0
+===============  =============  ================
+消息类型          msg_type       message_type
+聊天 ID          event.chat_id  message.chat_id
+===============  =============  =============
 
-解析逻辑：
-
-::
-
-   payload = {"action": {"value": "{\"action\": \"db:sel:/home/...\"}",
-                          "message_id": "..."},
-              "chat": {"chat_id": "...", "thread_id": "..."},
-              "sender": {"sender_id": {"open_id": "..."}},
-              "token": "..."}
-   ↓ action["value"] 可能是 str 或 dict
-   ↓ 如为 str → json.loads
-   ↓ action_value = value["action"]
-   ↓ FeishuCallbackEvent(...)
-
-``is_card_callback``
---------------------
-
-::
-
-   def is_card_callback(payload: dict) -> bool:
-       return "action" in payload and "value" in payload.get("action", {})
-
-这用于区分卡片回调和消息事件——消息事件有 ``event.message``，
-卡片回调有 ``action.value``。
+``parse_message_event`` 使用 ``or`` 链接受两者：
+``message.get("message_type", "") or message.get("msg_type", "")``
 
 调用栈
 ------------
 
-解析文本消息事件
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 ::
 
-   webhook._handle_message(payload)
+   ws_client._dispatch_event(payload)
    → parse_message_event(payload)
        → payload["event"]["message"]["msg_type"] == "text"?
        → payload["event"]["message"]["content"] = '{"text": "hello"}'
@@ -106,21 +70,3 @@ event_parsers — 飞书 JSON → 类型化事件
        → text = "hello".strip()
        → return FeishuMessageEvent(chat_id=..., user_id=..., text="hello", ...)
    → handle_message(event)  [handlers/message.py]
-
-解析卡片按钮点击
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-::
-
-   webhook._handle_callback(payload)
-   → is_card_callback(payload) → True  [此调用前已检查]
-   → parse_callback_event(payload)
-       → payload["action"]["value"] = '{"action": "tb:win1:mode"}'
-       → json.loads → {"action": "tb:win1:mode"}
-       → action_value = "tb:win1:mode"
-       → return FeishuCallbackEvent(value="tb:win1:mode", ...)
-   → CallbackContext(...)
-   → callback_registry.dispatch(ctx)
-       → ctx.value.startswith("tb:")? → True
-       → _find_handler("tb:") → toolbar.handle_toolbar_callback
-       → await handle_toolbar_callback(ctx)

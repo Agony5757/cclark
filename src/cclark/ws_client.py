@@ -124,7 +124,17 @@ def encode_frame(
     service_id: int,
     seq_id: int = 0,
 ) -> bytes:
-    """Encode a binary protobuf Frame."""
+    """Encode a binary protobuf Frame.
+
+    Args:
+        method: Frame method (0=CONTROL, 1=DATA).
+        payload: Raw bytes of the frame body.
+        headers: List of (key, value) string pairs.
+        service_id: Feishu service ID from the WS handshake.
+        seq_id: Sequence ID (default 0).
+    Returns:
+        Encoded protobuf Frame bytes.
+    """
     out = b""
     # field 1: SeqID (varint)
     out += _encode_field(_FIELD_SEQ_ID, _WIRE_VARINT, _encode_varint(seq_id))
@@ -150,7 +160,8 @@ def encode_frame(
 def decode_frame(data: bytes) -> tuple[dict[str, str], bytes, int, int]:  # noqa: C901
     """Decode a binary protobuf Frame (Feishu WS v2).
 
-    Returns (headers_dict, payload_bytes, service_id, method).
+    Returns:
+        A tuple of (headers_dict, payload_bytes, service_id, method).
     """
     pos = 0
     end = len(data)
@@ -292,6 +303,7 @@ _load_seen_state()
 
 
 def register_message_handler(handler: Any) -> None:
+    """Register the async handler function for inbound Feishu message events."""
     global _message_handler
     _message_handler = handler
 

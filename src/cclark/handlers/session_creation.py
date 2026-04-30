@@ -36,16 +36,17 @@ _sessions: dict[str, dict[str, Any]] = {}
 
 
 def get_session_state(user_id: str) -> dict[str, Any] | None:
-    """Return the active session creation state for a user, or None."""
+    """Return the active session-creation state dict for a user, or None if not in a flow."""
     return _sessions.get(user_id)
 
 
 def clear_session_creation(user_id: str) -> None:
-    """Cancel any in-progress session creation flow for a user."""
+    """Cancel and discard any in-progress session-creation flow for a user."""
     _clear_state(user_id)
 
 
 def _get_or_create_state(user_id: str, channel_id: str) -> dict[str, Any]:
+    """Return the existing or new per-user session-creation state dict."""
     state = _sessions.setdefault(user_id, {})
     if "phase" not in state:
         state["phase"] = STATE_BROWSE
@@ -57,6 +58,7 @@ def _get_or_create_state(user_id: str, channel_id: str) -> dict[str, Any]:
 
 
 def _clear_state(user_id: str) -> None:
+    """Remove the per-user session-creation state (on cancel or window creation)."""
     _sessions.pop(user_id, None)
 
 
@@ -64,7 +66,7 @@ def _clear_state(user_id: str) -> None:
 
 
 def _list_dirs(path: str) -> list[str]:
-    """Return sorted list of non-hidden subdirectory names."""
+    """Return sorted list of non-hidden subdirectory names in path."""
     try:
         entries = []
         for name in sorted(os.listdir(path)):
@@ -77,7 +79,7 @@ def _list_dirs(path: str) -> list[str]:
 
 
 def _format_dir_listing(path: str, user_id: str) -> str:
-    """Format a text directory listing for the browse phase."""
+    """Format a text directory listing for the browse phase of the wizard."""
     lines = [
         "New session setup: choose the workspace directory.",
         f"Current directory: {path}",
@@ -111,7 +113,7 @@ def _format_dir_listing(path: str, user_id: str) -> str:
 
 
 def _validate_mkdir_name(name: str) -> str | None:
-    """Return an error string if name is not a safe single directory name."""
+    """Return an error string if name is not a safe single-directory name, else None."""
     if not name:
         return "Usage: #mkdir <name>"
     if name in (".", ".."):
@@ -128,7 +130,7 @@ def _validate_mkdir_name(name: str) -> str | None:
 async def start_session_creation(
     event: FeishuMessageEvent, channel_id: str
 ) -> None:
-    """Begin the text-based session creation flow."""
+    """Start the directory-browser session creation wizard, sending the initial listing."""
     from cclark.handlers.message import _adapter, _gateway
 
     if _adapter is None:
@@ -165,7 +167,10 @@ async def start_session_creation(
 async def handle_session_input(
     event: FeishuMessageEvent, channel_id: str
 ) -> bool:
-    """Handle text input during session creation. Returns True if consumed."""
+    """Process a message while in the session-creation wizard.
+
+    Returns True if the message was consumed by the wizard (browse/provider/mode phase).
+    """
     from cclark.handlers.message import _adapter
 
     if _adapter is None:

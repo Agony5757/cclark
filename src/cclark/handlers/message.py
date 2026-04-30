@@ -21,6 +21,7 @@ _SELECTED_NUMBERED_OPTION_RE = re.compile(r"^\s*[❯›]\s*(\d+)\.\s+")
 
 
 def set_handlers(gateway, adapter) -> None:
+    """Store the gateway and adapter references for use in message handlers."""
     global _gateway, _adapter
     _gateway = gateway
     _adapter = adapter
@@ -128,7 +129,11 @@ def build_terminal_prompt_reply_guidance(body: str, state: dict[str, str]) -> st
 
 
 def set_terminal_prompt_state(channel_id: str, body: str) -> bool:
-    """Record the latest actionable terminal prompt shown for a channel."""
+    """Classify and record the latest actionable terminal prompt for a channel.
+
+    Returns:
+        True if the prompt was classified as actionable and stored.
+    """
     state = classify_terminal_prompt(body)
     if state is None:
         clear_terminal_prompt_state(channel_id)
@@ -138,11 +143,40 @@ def set_terminal_prompt_state(channel_id: str, body: str) -> bool:
 
 
 def clear_terminal_prompt_state(channel_id: str) -> None:
+    """Clear the stored terminal prompt state for a channel."""
     _terminal_prompt_states.pop(channel_id, None)
 
 
+async def _advance_channel_turn(channel_id: str) -> int:
+    """Finalize any open thinking card and advance the channel's turn index.
+
+    Returns:
+        The new turn index.
+    """
+    from cclark.state import advance_turn_index, get_verbose_state
+
+    if _adapter is not None:
+        state = get_verbose_state(channel_id)
+        if state.streaming_thinking_active:
+            from cclark.cards.thinking import finalize_active_thinking_card
+
+            try:
+                await finalize_active_thinking_card(_adapter, channel_id)
+            except Exception:
+                logger.exception(
+                    "ThinkingCardStreamer finalize before turn advance failed channel=%s",
+                    channel_id,
+                )
+
+    return advance_turn_index(channel_id)
+
+
 async def handle_message(event: FeishuMessageEvent) -> None:
-    """Handle an inbound Feishu text message."""
+    """Top-level handler for an inbound Feishu text message.
+
+    Routes to # command handling, session creation wizard, terminal prompt
+    replies, or gateway forwarding as appropriate.
+    """
     channel_id = config.parse_channel_id(event.chat_id, event.thread_id)
     text = event.text
 
@@ -184,9 +218,7 @@ async def handle_message(event: FeishuMessageEvent) -> None:
 
     # Forward text to the agent window
     try:
-        from cclark.state import advance_turn_index
-
-        advance_turn_index(channel_id)
+        await _advance_channel_turn(channel_id)
         await _gateway.send_to_window(window_id, text)
     except Exception:
         logger.exception("Failed to send to window %s", window_id)
@@ -199,11 +231,10 @@ async def _handle_terminal_prompt_reply(
     window_id: str,
     text: str,
 ) -> bool:
-    """Handle prompt replies that need more than plain text + Enter.
+    """Handle numbered replies to permission/plan/selection prompts.
 
-    Claude plan option 3 is special: selecting it should focus the feedback
-    field without immediately submitting empty feedback. The next Feishu
-    message is the feedback text and should be submitted with Enter.
+    Returns True if the message was consumed as a prompt reply.
+    Special case: plan option 3 is two-step (select first, then feedback text).
     """
     state = _terminal_prompt_states.get(channel_id)
     if not state:
@@ -232,9 +263,7 @@ async def _handle_terminal_prompt_reply(
             return True
 
         if state.get("phase") == "awaiting_feedback":
-            from cclark.state import advance_turn_index
-
-            advance_turn_index(channel_id)
+            await _advance_channel_turn(channel_id)
             await _gateway.send_to_window(window_id, text)
             clear_terminal_prompt_state(channel_id)
             return True
@@ -249,9 +278,7 @@ async def _handle_terminal_prompt_reply(
             stripped,
             state,
         ):
-            from cclark.state import advance_turn_index
-
-            advance_turn_index(channel_id)
+            await _advance_channel_turn(channel_id)
             clear_terminal_prompt_state(channel_id)
             return True
 
@@ -260,9 +287,7 @@ async def _handle_terminal_prompt_reply(
         return True
 
     if stripped.isdigit() and (not allowed_options or stripped in allowed_options):
-        from cclark.state import advance_turn_index
-
-        advance_turn_index(channel_id)
+        await _advance_channel_turn(channel_id)
         await _gateway.send_to_window(window_id, stripped)
         clear_terminal_prompt_state(channel_id)
         return True
@@ -275,6 +300,7 @@ async def _send_invalid_prompt_option(
     stripped: str,
     allowed_options: set[str],
 ) -> None:
+    """Send an error message when the user picks a number not shown by Claude."""
     if _adapter is None:
         return
     choices = ", ".join(f"`{option}`" for option in sorted(allowed_options, key=int))
@@ -289,11 +315,10 @@ async def _select_terminal_option_by_navigation(
     target: str,
     state: dict[str, str],
 ) -> bool:
-    """Select a Claude terminal choice by moving the UI cursor, then Enter.
+    """Move the terminal cursor to the target option and press Enter.
 
-    Claude selection UIs render footer actions with numbers, but those rows are
-    not always numeric shortcuts. Navigating from the captured cursor position is
-    the reliable path for both ordinary rows and footer actions.
+    Uses captured cursor position as baseline, navigates with Up/Down keys.
+    Returns True on success.
     """
     selected = state.get("selected") or ""
     options = [option for option in (state.get("options") or "").split(",") if option]
@@ -314,7 +339,7 @@ async def _select_terminal_option_by_navigation(
 
 
 async def _handle_new_channel(event: FeishuMessageEvent, channel_id: str) -> None:
-    """Show guidance for an unbound chat."""
+    """Send guidance when a message arrives on a chat with no bound session."""
     if _adapter is None:
         return
     await _adapter.send_text(
@@ -326,7 +351,7 @@ async def _handle_new_channel(event: FeishuMessageEvent, channel_id: str) -> Non
 async def _handle_hash_command(
     event: FeishuMessageEvent, channel_id: str, text: str
 ) -> None:
-    """Route # prefixed commands to their handlers."""
+    """Dispatch a #command (e.g. #new, #help, #status) to the appropriate handler."""
     parts = text.split(maxsplit=1)
     cmd = parts[0].lower()
     arg = parts[1] if len(parts) > 1 else ""
@@ -358,7 +383,7 @@ async def _handle_hash_command(
 
 
 async def _handle_hash_new(event: FeishuMessageEvent, channel_id: str) -> None:
-    """Kill the current bound window and start the session creation wizard."""
+    """Handle #new — kill existing bound window(s) and start the session creation wizard."""
     from cclark.state import reset_channel_state
     from cclark.handlers.session_creation import (
         clear_session_creation,
@@ -395,7 +420,7 @@ async def _handle_hash_new(event: FeishuMessageEvent, channel_id: str) -> None:
 async def _handle_session_command(
     _event: FeishuMessageEvent, channel_id: str, arg: str
 ) -> None:
-    """Route #session subcommands: list, close."""
+    """Handle #session list and #session close <window_id>."""
     sub = arg.strip().lower()
     if sub == "list":
         await _handle_session_list(channel_id)
@@ -412,7 +437,7 @@ async def _handle_session_command(
 
 
 async def _handle_session_list(channel_id: str) -> None:
-    """List all tmux windows created by cclark with their channel bindings."""
+    """Send a text listing of all active cclark-managed tmux sessions."""
     if _gateway is None or _adapter is None:
         return
 
@@ -438,7 +463,7 @@ async def _handle_session_list(channel_id: str) -> None:
 
 
 async def _handle_session_close(channel_id: str, target_wid: str) -> None:
-    """Close a session by window id."""
+    """Close a specific tmux window by its window_id and notify the channel."""
     if _gateway is None or _adapter is None:
         return
 
@@ -458,7 +483,7 @@ async def _handle_session_close(channel_id: str, target_wid: str) -> None:
 
 
 async def _handle_status(channel_id: str) -> None:
-    """Show current window status for this channel."""
+    """Send a text summary of the session bound to this channel (window, provider, mode, verbose)."""
     if _gateway is None or _adapter is None:
         return
 
@@ -482,19 +507,20 @@ async def _handle_status(channel_id: str) -> None:
         f"CWD: {ws.cwd or '—'}",
         f"Mode: {ws.approval_mode or '—'}",
         f"Verbose: {'on' if verbose else 'off'}",
-        f"Thinking card: {vs.streaming_thinking_card_id or 'none'}",
+        f"Thinking card: {vs.streaming_thinking_card_id if vs.streaming_thinking_active else 'none'}",
     ]
     await _adapter.send_text(channel_id, "\n".join(lines))
 
 
 async def _handle_help(channel_id: str) -> None:
-    """Send help text."""
+    """Send the cclark command reference to the channel."""
     if _adapter is None:
         return
     await _adapter.send_text(channel_id, _build_help_text())
 
 
 def _build_help_text() -> str:
+    """Return the formatted help text listing all cclark commands."""
     return (
         "cclark commands:\n"
         "#new — Start a fresh Claude workspace for this chat. If this chat already has one, cclark closes it first.\n"
@@ -512,14 +538,14 @@ def _build_help_text() -> str:
 
 
 async def _handle_screenshot(channel_id: str) -> None:
-    """Capture and send a screenshot."""
+    """Handle #screenshot — capture the active tmux pane and send it as a Feishu image."""
     from cclark.handlers.screenshot import handle_screenshot_request
     if _gateway and _adapter:
         await handle_screenshot_request(channel_id, _gateway, _adapter)
 
 
 async def _handle_verbose_toggle(channel_id: str, arg: str) -> None:
-    """Set or toggle verbose mode for this channel."""
+    """Handle #verbose on|off — set or toggle per-channel verbose mode and notify the user."""
     if _adapter is None:
         return
     from cclark.state import get_verbose_state
