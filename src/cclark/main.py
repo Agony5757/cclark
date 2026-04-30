@@ -264,7 +264,7 @@ async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR091
         except Exception:  # noqa: BLE001
             logger.exception("on_message handler failed")
 
-    async def on_status(event: Any) -> None:
+    async def on_status(event: Any) -> None:  # noqa: C901
         try:
             channel_ids = list(getattr(event, "channel_ids", []) or [])
             if not channel_ids:
@@ -400,7 +400,7 @@ def _build_adapter(app: AppConfig) -> FeishuAdapter:
     return adapter
 
 
-async def _main() -> None:
+async def _main() -> None:  # noqa: C901
     """Start the cclark bot (WebSocket mode, supports multi-app)."""
     global _ws_clients
 

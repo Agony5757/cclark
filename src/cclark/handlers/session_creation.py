@@ -196,7 +196,7 @@ async def handle_session_input(
 # ── Phase handlers ───────────────────────────────────────────────────────────
 
 
-async def _handle_browse(  # noqa: C901,PLR0912,PLR0915
+async def _handle_browse(  # noqa: C901,PLR0911,PLR0912,PLR0915
     event: FeishuMessageEvent,
     channel_id: str,
     text: str,
