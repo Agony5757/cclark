@@ -6,14 +6,16 @@ import re
 
 import structlog
 
+from cclark.adapter import FeishuAdapter
 from cclark.config import config
 from cclark.event_parsers import FeishuMessageEvent
+from unified_icc.gateway import UnifiedICC
 
 logger = structlog.get_logger()
 
 # Set by main.py at startup
-_gateway = None
-_adapter = None
+_gateway: UnifiedICC | None = None
+_adapter: FeishuAdapter | None = None
 _terminal_prompt_states: dict[str, dict[str, str]] = {}
 
 _NUMBERED_OPTION_RE = re.compile(r"^\s*(?:[❯›]\s*)?(\d+)\.\s+(.+?)\s*$")
@@ -226,7 +228,7 @@ async def handle_message(event: FeishuMessageEvent) -> None:
             await _adapter.send_text(channel_id, "Failed to send message to session.")
 
 
-async def _handle_terminal_prompt_reply(
+async def _handle_terminal_prompt_reply(  # noqa: C901,PLR0911
     channel_id: str,
     window_id: str,
     text: str,
@@ -244,6 +246,8 @@ async def _handle_terminal_prompt_reply(
     allowed_options = {
         option for option in (state.get("options") or "").split(",") if option
     }
+    if _gateway is None:
+        return False
     if state.get("type") == "plan_decision":
         if state.get("phase") == "choice" and stripped == "3":
             await _gateway.send_input_to_window(
@@ -324,6 +328,8 @@ async def _select_terminal_option_by_navigation(
     options = [option for option in (state.get("options") or "").split(",") if option]
     if not selected or target not in options or selected not in options:
         return False
+    if _gateway is None:
+        return False
 
     current_idx = options.index(selected)
     target_idx = options.index(target)
@@ -338,7 +344,7 @@ async def _select_terminal_option_by_navigation(
 # ── # command system ──────────────────────────────────────────────────────────
 
 
-async def _handle_new_channel(event: FeishuMessageEvent, channel_id: str) -> None:
+async def _handle_new_channel(_event: FeishuMessageEvent, channel_id: str) -> None:
     """Send guidance when a message arrives on a chat with no bound session."""
     if _adapter is None:
         return
@@ -365,10 +371,11 @@ async def _handle_hash_command(
     elif cmd == "#help":
         await _handle_help(channel_id)
     elif cmd == "#mkdir":
-        await _adapter.send_text(
-            channel_id,
-            "Use #new first, then send #mkdir <name> during directory selection.",
-        )
+        if _adapter is not None:
+            await _adapter.send_text(
+                channel_id,
+                "Use #new first, then send #mkdir <name> during directory selection.",
+            )
     elif cmd == "#screenshot":
         await _handle_screenshot(channel_id)
     elif cmd == "#verbose":
@@ -422,6 +429,8 @@ async def _handle_session_command(
 ) -> None:
     """Handle #session list and #session close <window_id>."""
     sub = arg.strip().lower()
+    if _adapter is None:
+        return
     if sub == "list":
         await _handle_session_list(channel_id)
     elif sub.startswith("close "):

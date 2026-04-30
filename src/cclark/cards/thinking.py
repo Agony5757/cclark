@@ -104,6 +104,10 @@ class ThinkingCardStreamer:
         )
 
     async def _patch_card(self, card: dict) -> None:
+        if self._card_id is None:
+            msg_id = await self._send_card(card)
+            self._card_id = msg_id
+            return
         try:
             await self._client.patch_message(self._card_id, json.dumps(card))
         except FeishuAPIError as exc:
