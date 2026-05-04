@@ -4,7 +4,6 @@
 
 - Python 3.12+
 - tmux
-- 运行中的 unified-icc server
 - 已启用机器人、消息权限和事件长连接的飞书应用
 
 ## 安装
@@ -27,9 +26,9 @@ apps:
   - name: "default"
     app_id: "cli_xxxxxxxxxxxxxxxx"
     app_secret: "xxxxxxxxxxxxxxxxxxxxxxxx"
-    allowed_users: "all"       # "all" 或逗号分隔的 open_id 列表
-    provider: "claude"         # 默认智能体
-    tmux_session: "cclark"    # tmux 会话名
+    allowed_users: "all"
+    provider: "claude"
+    tmux_session: "cclark"
     health_port: 8080
 ```
 
@@ -40,37 +39,23 @@ apps:
 3. 获取 `app_id` 和 `app_secret`
 4. 在应用配置中启用「消息权限」和「长连接」事件订阅
 
-### 环境变量
-
-| 变量 | 说明 |
-|------|------|
-| `FEISHU_APP_ID` | 飞书 app_id（仅单应用开发用） |
-| `FEISHU_APP_SECRET` | 飞书 app_secret |
-| `UNIFIED_ICC_DIR` | 状态目录（默认 ~/.unified-icc） |
-
 ## 启动
 
-需要先启动 unified-icc server：
+### 1. 启动 unified-icc server
+
+详见 [unified-icc 快速上手](../unified-icc/docs/getting-started.md)：
 
 ```bash
-# 终端 1：启动 unified-icc server
 unified-icc server start --port 8900
+```
 
-# 终端 2：启动 cclark
+### 2. 启动 cclark
+
+```bash
 uv run cclark
 ```
 
 ## 飞书命令
-
-发送消息到飞书机器人：
-
-```bash
-# 查看帮助
-LARK_CLI_NO_PROXY=1 lark-cli im +messages-send \
-  --as user \
-  --chat-id oc_8c1e688f72705de85fba2716bb69c9ce \
-  --text "#help"
-```
 
 | 命令 | 说明 |
 |------|------|
@@ -99,4 +84,4 @@ LARK_CLI_NO_PROXY=1 lark-cli im +messages-send \
 
 - [架构介绍](architecture.md) — 了解组件和数据流
 - [命令参考](commands.md) — 完整的命令列表
-- [可扩展性](extending.md) — 自定义开发
+- [故障排除](troubleshooting.md) — 常见问题
