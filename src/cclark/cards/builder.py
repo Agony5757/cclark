@@ -6,6 +6,7 @@ Feishu card schema: https://open.feishu.cn/document/server-docs/im-v1/message-co
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from unified_icc.adapter import CardPayload, InteractivePrompt
@@ -41,16 +42,36 @@ class FeishuCardBuilder:
 
     @staticmethod
     def _md(text: str) -> str:
-        """Basic markdown-to-Feishu markdown-lite converter."""
-        # Escape first so inserted HTML tags are not themselves escaped
+        """Basic markdown-to-Feishu markdown-lite converter.
+
+        Preserves fenced code blocks (```...```) and converts inline formatting
+        (bold, inline code) in the remaining text.
+        """
+        # 1. Extract fenced code blocks before any escaping.
+        code_blocks: list[str] = []
+        code_pat = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
+
+        def _stash_code(m: re.Match[str]) -> str:
+            lang = m.group(1)
+            body = m.group(2).rstrip("\n")
+            # Escape HTML inside code blocks
+            body = body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            idx = len(code_blocks)
+            if lang:
+                code_blocks.append(f'<pre lang="{lang}">{body}</pre>')
+            else:
+                code_blocks.append(f"<pre>{body}</pre>")
+            return f"\x00CODEBLOCK_{idx}\x00"
+
+        text = code_pat.sub(_stash_code, text)
+
+        # 2. Escape HTML in non-code text.
         text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        # Bold
-        text = text.replace("**", "<bold>", 1)
-        idx = text.find("**", text.find("<bold>") + 6)
-        if idx != -1:
-            text = text[:idx + 2].replace("<bold>", "<strong>") + text[idx + 2:]
-            text = text.replace("**", "</strong>", 1)
-        # Inline code
+
+        # 3. Bold (**text**)
+        text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+
+        # 4. Inline code (`text`) — skip escaped NUL placeholders.
         parts = text.split("`")
         out: list[str] = []
         for i, part in enumerate(parts):
@@ -58,7 +79,13 @@ class FeishuCardBuilder:
                 out.append(f"<code>{part}</code>")
             else:
                 out.append(part)
-        return "".join(out)
+        text = "".join(out)
+
+        # 5. Restore code blocks.
+        for idx, block in enumerate(code_blocks):
+            text = text.replace(f"\x00CODEBLOCK_{idx}\x00", block)
+
+        return text
 
     @staticmethod
     def _truncate_code(text: str) -> str:

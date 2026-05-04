@@ -59,6 +59,23 @@ class TestMarkdownConversion:
         result = FeishuCardBuilder._md("foo & bar")
         assert "&amp;" in result
 
+    def test_fenced_code_block_preserved(self) -> None:
+        text = "result:\n\n```text\nhello-codex\n```"
+        result = FeishuCardBuilder._md(text)
+        assert "<pre lang=\"text\">hello-codex</pre>" in result
+        assert "<code>" not in result
+
+    def test_fenced_code_block_without_language(self) -> None:
+        text = "```\nvar x = 1;\n```"
+        result = FeishuCardBuilder._md(text)
+        assert "<pre>var x = 1;</pre>" in result
+
+    def test_code_block_with_inline_code(self) -> None:
+        text = "use `npm` to install:\n\n```bash\nnpm install\n```"
+        result = FeishuCardBuilder._md(text)
+        assert "<code>npm</code>" in result
+        assert "<pre lang=\"bash\">npm install</pre>" in result
+
 
 class TestCodeTruncation:
     def test_under_limit_unchanged(self) -> None:
