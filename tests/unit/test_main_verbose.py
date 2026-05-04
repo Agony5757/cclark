@@ -72,6 +72,23 @@ def test_split_messages_treats_expquote_markers_as_thinking() -> None:
     assert [m.text for m in regular] == ["final answer"]
 
 
+def test_split_messages_keeps_tool_result_markers_as_regular() -> None:
+    tool_result_marker = "\x02EXPQUOTE_START\x02modified 3 files\x02EXPQUOTE_END\x02"
+    messages = [
+        SimpleNamespace(
+            text=tool_result_marker,
+            content_type="tool_result",
+            role="assistant",
+        ),
+        SimpleNamespace(text="done", content_type="tool_result", role="assistant"),
+    ]
+
+    thinking, regular = _split_messages(messages)
+
+    assert not thinking
+    assert [m.text for m in regular] == [tool_result_marker, "done"]
+
+
 def test_trim_terminal_panel_body_keeps_latest_prompt_panel() -> None:
     body = """
 ❯ /status
@@ -361,4 +378,3 @@ async def test_new_turn_creates_new_card() -> None:
     # Two cards: one per turn
     assert len(adapter._client.sent_cards) == 2
     assert adapter._client.patched_cards == []
-

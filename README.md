@@ -271,6 +271,48 @@ Bot: (Claude 应用反馈，继续执行)
 
 ---
 
+## Provider Differences
+
+不同智能体在会话发现、交互提示和输出格式上有所不同：
+
+| 特性 | Claude Code | Codex CLI |
+|------|-------------|-----------|
+| 会话发现 | Claude Code hooks 写入 `~/.claude/session_map.json` | 扫描 `~/.codex/sessions/` 按 cwd 匹配 |
+| 交互提示解析 | `terminal_parser.py` 正则模式 | `CodexProvider.parse_terminal_status()` 独立实现 |
+| 思考内容 | thinking block（`#verbose on|off` 控制传至飞书的内容） | 无 thinking block，`#verbose` 无效果（无 thinking 消息可传） |
+| 工具调用 | `Bash`/`Write`/`Edit` 等 | `exec_command` / `apply_patch` / `request_user_input` |
+| 工具结果展示 | 可展开引用 | 可展开引用（shell 输出行数统计） |
+| 权限审批 | 数字回复审批（已实现） | 数字回复审批（已实现） |
+| `/plan` 模式 | Claude Plan Mode，两步 option 3 | Codex Plan Mode，option 3 同理 |
+| `/status` | Claude 原生输出 + transcript snapshot | transcript snapshot（`/status` 本身不回写 transcript） |
+
+### Codex 交互提示
+
+Codex 的编辑确认提示格式如下，cclark 会将其渲染为飞书卡片：
+
+```
+Do you want to make this edit to src/main.py?
+  - old line
+  + new line
+Enter to confirm, Esc to cancel
+```
+
+`parse_terminal_status()` 会将上述内容压缩为：
+```
+Do you want to make this edit to src/main.py?
+File: src/main.py
+Changes: +1 -1
+Preview:
+  - old line
+  + new line
+
+Enter to confirm, Esc to cancel
+```
+
+> **关于 `#verbose`**：`#verbose on|off` 控制的是"thinking 消息是否传给飞书"。Codex 不产生 thinking 消息，`thinking_msgs` 始终为空，两种 verbose 状态下 thinking card 均不会被创建，`#verbose` 对 Codex 无可见效果。
+
+---
+
 ## Event Flow Diagram
 
 ### 入站事件（飞书 → Agent）

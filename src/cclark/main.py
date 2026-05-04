@@ -96,6 +96,11 @@ async def _auto_dismiss_terminal_panel(gateway: UnifiedICC, window_id: str, body
 def _looks_like_thinking(m: Any) -> bool:
     """Return True for messages that belong in the thinking card stream."""
     ct = getattr(m, "content_type", "text") or "text"
+    # Only non-tool text can safely fall back to marker-based heuristics.
+    # Tool-use/result payloads are frequently formatted with expandable-quote
+    # markers (e.g. exec output), and should not be treated as thinking.
+    if ct != "thinking" and ct != "text":
+        return False
     if ct == "thinking":
         return True
     text = getattr(m, "text", "") or ""
@@ -290,17 +295,18 @@ async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR091
                         )
 
                         await _finalize_thinking(adapter, channel_id)
+                        provider_name = getattr(event, "provider", "") or "claude"
                         prompt_state = classify_terminal_prompt(body)
                         if prompt_state and set_terminal_prompt_state(channel_id, body):
                             if body:
                                 body = (
                                     f"{body}\n\n"
-                                    f"{build_terminal_prompt_reply_guidance(body, prompt_state)}"
+                                    f"{build_terminal_prompt_reply_guidance(body, prompt_state, provider_name)}"
                                 )
                             await adapter.send_card(
                                 channel_id,
                                 CardPayload(
-                                    title="Claude needs input",
+                                    title=f"{provider_name.title()} needs input",
                                     body=body,
                                     color="orange",
                                 ),
@@ -332,14 +338,15 @@ async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR091
                                     body,
                                 )
                         else:
+                            provider_name = getattr(event, "provider", "") or "claude"
                             body = (
-                                "Claude is showing a terminal prompt, but cclark "
+                                f"{provider_name.title()} is showing a terminal prompt, but cclark "
                                 "could not extract display text."
                             )
                             await adapter.send_card(
                                 channel_id,
                                 CardPayload(
-                                    title="Claude terminal output",
+                                    title=f"{provider_name.title()} terminal output",
                                     body=body,
                                     color="blue",
                                 ),

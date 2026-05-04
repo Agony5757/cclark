@@ -345,7 +345,7 @@ async def test_selection_prompt_rejects_number_not_visible(
     await message.handle_message(_event("4"))
 
     assert gateway.sent_to_window == []
-    assert "`4` is not a visible Claude option" in adapter.sent_text[-1][1]
+    assert "`4` is not a visible option" in adapter.sent_text[-1][1]
 
 
 @pytest.mark.asyncio
@@ -376,3 +376,47 @@ async def test_footer_selection_prompt_uses_navigation(
         ("@42", "Down"),
         ("@42", "Enter"),
     ]
+
+
+def test_classify_terminal_prompt_generic_plan_markers() -> None:
+    """Plan detection should work with generic markers (no 'Claude' prefix)."""
+    panel = """
+The agent has written up a plan:
+
+1. Create README.md
+2. Add tests
+
+Would you like to proceed?
+  1. Yes
+  2. No
+  3. Tell the agent what to change
+"""
+    state = message.classify_terminal_prompt(panel)
+    assert state is not None
+    assert state["type"] == "plan_decision"
+
+
+def test_classify_terminal_prompt_codex_permission() -> None:
+    """Codex edit confirmation prompts should be classified as permission."""
+    panel = """
+Do you want to make this edit to src/main.py?
+  - old line
+  + new line
+  1. Yes
+  2. No
+
+Esc to cancel
+"""
+    state = message.classify_terminal_prompt(panel)
+    assert state is not None
+    assert state["type"] == "permission"
+
+
+def test_build_terminal_prompt_reply_guidance_uses_provider_name() -> None:
+    """Reply guidance should include the provider name."""
+    from cclark.handlers.message import build_terminal_prompt_reply_guidance
+
+    state = {"type": "permission", "phase": "choice"}
+    guidance = build_terminal_prompt_reply_guidance("no options here", state, provider_name="codex")
+    assert "Codex" in guidance
+    assert "Claude" not in guidance

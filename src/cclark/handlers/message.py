@@ -35,10 +35,10 @@ def classify_terminal_prompt(body: str) -> dict[str, str] | None:
     options = extract_numbered_prompt_options(text)
     selected = extract_selected_prompt_option(text)
     if (
-        "Claude has written up a plan" in text
+        "has written up a plan" in text
         or (
             "Would you like to proceed?" in text
-            and "Tell Claude what to change" in text
+            and "what to change" in text
         )
     ):
         return {
@@ -113,14 +113,14 @@ def extract_selected_prompt_option(body: str) -> str:
     return ""
 
 
-def build_terminal_prompt_reply_guidance(body: str, state: dict[str, str]) -> str:
-    """Build prompt-specific Feishu guidance for the current Claude terminal UI."""
+def build_terminal_prompt_reply_guidance(body: str, state: dict[str, str], provider_name: str = "claude") -> str:
+    """Build prompt-specific Feishu guidance for the current terminal UI."""
     options = extract_numbered_prompt_options(body)
     if options:
         choices = ", ".join(f"`{option}`" for option in options)
         guidance = f"Reply with one of the listed numbers: {choices}."
     else:
-        guidance = "Reply with the number shown in Claude."
+        guidance = f"Reply with the number shown in {provider_name.title()}."
 
     if state.get("type") == "plan_decision" and "3" in options:
         guidance += (
@@ -262,7 +262,7 @@ async def _handle_terminal_prompt_reply(  # noqa: C901,PLR0911
                 await _adapter.send_text(
                     channel_id,
                     "Plan option 3 selected. Send the feedback text next; "
-                    "cclark will submit it to Claude.",
+                    "cclark will submit it to the agent.",
                 )
             return True
 
@@ -304,13 +304,13 @@ async def _send_invalid_prompt_option(
     stripped: str,
     allowed_options: set[str],
 ) -> None:
-    """Send an error message when the user picks a number not shown by Claude."""
+    """Send an error message when the user picks a number not shown."""
     if _adapter is None:
         return
     choices = ", ".join(f"`{option}`" for option in sorted(allowed_options, key=int))
     await _adapter.send_text(
         channel_id,
-        f"`{stripped}` is not a visible Claude option. Reply with one of: {choices}.",
+        f"`{stripped}` is not a visible option. Reply with one of: {choices}.",
     )
 
 
@@ -410,7 +410,7 @@ async def _handle_hash_new(event: FeishuMessageEvent, channel_id: str) -> None:
         orphans = await _gateway.list_orphaned_agent_windows()
         if orphans and _adapter is not None:
             lines = [
-                "Warning: found tmux-Claude window(s) that are no longer tracked by cclark:",
+                "Warning: found tmux-agent window(s) that are no longer tracked by cclark:",
             ]
             for w in orphans:
                 lines.append(
@@ -532,7 +532,7 @@ def _build_help_text() -> str:
     """Return the formatted help text listing all cclark commands."""
     return (
         "cclark commands:\n"
-        "#new — Start a fresh Claude workspace for this chat. If this chat already has one, cclark closes it first.\n"
+        "#new — Start a fresh agent workspace for this chat. If this chat already has one, cclark closes it first.\n"
         "#mkdir <name> — During #new directory selection, create a new child directory and switch into it.\n"
         "#status — Show the session bound to this chat.\n"
         "#verbose on|off — Show or hide streaming/thinking details.\n"
@@ -542,7 +542,7 @@ def _build_help_text() -> str:
         "#help — Show this help.\n"
         "\n"
         "To begin: send #new, choose a directory, send ok, choose a provider, then choose standard or yolo mode.\n"
-        "After a session starts, normal text and Claude slash commands such as /status are forwarded to Claude."
+        "After a session starts, normal text and slash commands such as /status are forwarded to the agent."
     )
 
 
