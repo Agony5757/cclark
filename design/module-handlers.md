@@ -335,9 +335,9 @@ handle_message → _handle_terminal_prompt_reply
 
 | File | Written by | Purpose |
 |---|---|---|
-| `~/.cclark/state.json` | `unified_icc.state_persistence` | channel ↔ window bindings |
-| `~/.cclark/session_map.json` | Claude Code hooks | window_id → session_id |
-| `~/.cclark/window_state_store.json` | `window_store` | per-window metadata (cwd, provider, etc.) |
+| `~/.unified-icc/state.json` | `unified_icc.state_persistence` | channel ↔ window bindings |
+| `~/.unified-icc/session_map.json` | Claude Code hooks | window_id → session_id |
+| `~/.unified-icc/window_state_store.json` | `window_store` | per-window metadata (cwd, provider, etc.) |
 
 ---
 

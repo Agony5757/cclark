@@ -49,12 +49,12 @@
 ### 3.2 Configuration
 
 ```ini
-# ~/.cclark/.env
+# ~/.unified-icc/.env
 FEISHU_APP_ID=cli_xxxxxxx
 FEISHU_APP_SECRET=xxxxxxx
 FEISHU_VERIFICATION_TOKEN=xxxxxxx
 FEISHU_ENCRYPT_KEY=xxxxxxx
-CCLARK_DIR=~/.cclark
+UNIFIED_ICC_DIR=~/.unified-icc
 CCLARK_PROVIDER=claude
 ALLOWED_USERS=ou_xxxxxxx
 ```

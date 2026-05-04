@@ -64,7 +64,7 @@
 配置文件
 ------------
 
-首选配置文件是 ``~/.cclark/config.yaml``：
+首选配置文件是 ``~/.unified-icc/config.yaml``：
 
 .. code-block:: yaml
 

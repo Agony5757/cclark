@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import structlog
 
 from cclark.adapter import FeishuAdapter
 from cclark.config import config
 from cclark.event_parsers import FeishuMessageEvent
-from unified_icc.gateway import UnifiedICC
 
 logger = structlog.get_logger()
 
 # Set by main.py at startup
-_gateway: UnifiedICC | None = None
+_gateway: Any | None = None
 _adapter: FeishuAdapter | None = None
 _terminal_prompt_states: dict[str, dict[str, str]] = {}
 

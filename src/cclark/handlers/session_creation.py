@@ -439,13 +439,14 @@ async def _create_window(
     pending_text = state.pop("pending_text", original_text)
 
     try:
-        win = await _gateway.create_window(
+        win = await _create_gateway_window(
+            channel_id,
             path,
-            provider=provider,
-            mode=approval_mode,
+            provider,
+            approval_mode,
         )
         window_id = win.window_id if hasattr(win, "window_id") else str(win)
-        window_name = getattr(win, "window_name", window_id)
+        window_name = getattr(win, "window_name", getattr(win, "display_name", window_id))
     except Exception as e:
         logger.exception("Failed to create window")
         await _adapter.send_text(channel_id, f"Failed to create window: {e}")
@@ -500,3 +501,26 @@ async def _create_window(
                 await _gateway.send_to_window(window_id, text)
             except Exception:
                 logger.exception("Failed to forward pending text")
+
+
+async def _create_gateway_window(
+    channel_id: str,
+    path: str,
+    provider: str,
+    approval_mode: str,
+) -> Any:
+    """Create a window through either the WS proxy or legacy embedded gateway."""
+    from cclark.handlers.message import _gateway
+
+    if hasattr(_gateway, "create_channel_window"):
+        return await _gateway.create_channel_window(
+            channel_id,
+            path,
+            provider=provider,
+            mode=approval_mode,
+        )
+    return await _gateway.create_window(
+        path,
+        provider=provider,
+        mode=approval_mode,
+    )

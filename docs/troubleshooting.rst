@@ -7,9 +7,9 @@
 "FEISHU_APP_ID environment variable is required"
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-当 ``~/.cclark/config.yaml`` 不存在时，配置单例会回退读取环境变量；此时缺少必需环境变量会抛出 ``ValueError``。
+当 ``~/.unified-icc/config.yaml`` 不存在时，配置单例会回退读取环境变量；此时缺少必需环境变量会抛出 ``ValueError``。
 
-**推荐修复**：创建 ``~/.cclark/config.yaml``：
+**推荐修复**：创建 ``~/.unified-icc/config.yaml``：
 
 .. code-block:: yaml
 
@@ -37,7 +37,7 @@
 
 .. code-block:: bash
 
-   # 在 ~/.cclark/config.yaml 中设置 health_port: 8081
+   # 在 ~/.unified-icc/config.yaml 中设置 health_port: 8081
    cclark
 
 飞书 WebSocket 事件

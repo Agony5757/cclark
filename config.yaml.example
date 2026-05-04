@@ -1,6 +1,6 @@
 # CCLark Configuration — config.yaml
 #
-# This is the preferred configuration format. CCLark reads ~/.cclark/config.yaml
+# This is the preferred configuration format. CCLark reads ~/.unified-icc/config.yaml
 # on startup. Each app entry maps one Feishu app to one cclark process.
 #
 # For single-app setups, define one entry. For multi-app setups, define multiple
@@ -8,7 +8,12 @@
 #
 # Environment variable fallback: FEISHU_APP_ID / FEISHU_APP_SECRET (single-app
 # only, for quick local development). Environment variables are ignored when
-# config.yaml exists.
+# config.yaml exists. UNIFIED_ICC_DIR can override the config directory.
+
+# CCLark now connects to a standalone unified-icc API server. Start it with:
+#   unified-icc server start --port 8900
+unified_icc_ws_url: "ws://127.0.0.1:8900/api/v1/ws"
+unified_icc_api_key: ""                       # must match ICC_API_KEY when set
 
 apps:
   - name: "default"                         # unique name for this app

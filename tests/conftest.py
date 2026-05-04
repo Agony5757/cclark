@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from types import ModuleType
 from unittest.mock import MagicMock
 
@@ -18,6 +19,7 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ.setdefault("ALLOWED_USERS", "ou_testuser1,ou_testuser2")
     os.environ.setdefault("FEISHU_BOT_USER_ID", "ou_bot")
     os.environ.setdefault("CCLARK_PROVIDER", "claude")
+    os.environ.setdefault("UNIFIED_ICC_DIR", "/tmp/cclark-test-config")
 
 
 @pytest.fixture(autouse=True)
@@ -40,6 +42,9 @@ def mock_config(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     mock_cfg.bot_user_id = "ou_bot"
     mock_cfg.default_provider = "claude"
     mock_cfg.toolbar_config_path = ""
+    mock_cfg.config_dir = Path("/tmp/cclark-test-config")
+    mock_cfg.unified_icc_ws_url = "ws://127.0.0.1:8900/api/v1/ws"
+    mock_cfg.unified_icc_api_key = ""
     # Real methods needed by callback_registry and ws_client
     mock_cfg.is_user_allowed = lambda uid: uid in {"ou_testuser1", "ou_testuser2"}
     mock_cfg.parse_channel_id = lambda cid, tid="": f"feishu:{cid}:{tid}" if tid else f"feishu:{cid}"

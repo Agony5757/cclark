@@ -132,8 +132,8 @@ Feishu's WebSocket frames are raw protobuf-encoded binary messages, not JSON. Th
 
 1. **JSON parse** the payload.
 2. **Self-filter**: extract `sender.sender_type` and `id` (app_id). If `sender_type == "app"` or `id == self._app_id`, skip — this prevents the bot from processing its own output messages that Feishu re-delivers.
-3. **Deduplicate by event_id**: events are persisted to `~/.cclark/seen_events.json`. A duplicate is silently dropped.
-4. **Deduplicate by message_id**: messages persisted to `~/.cclark/seen_messages.json`.
+3. **Deduplicate by event_id**: events are persisted to `~/.unified-icc/seen_events.json`. A duplicate is silently dropped.
+4. **Deduplicate by message_id**: messages persisted to `~/.unified-icc/seen_messages.json`.
 5. **Authorization**: `config.is_user_allowed_in_app(user_id, app_name)` (multi-app) or `config.is_user_allowed(user_id)` (single-app). Unauthorized users are dropped silently (no error response to avoid information leakage).
 6. **Annotate event**: `event._app_name = self._app_name` is set so downstream handlers can route to the correct app context.
 7. **Dispatch**: call `_message_handler(event)` (registered by `handlers/message.py`).
@@ -225,7 +225,7 @@ retry _connect_and_receive()
 
 ### 5.2 Persisted state
 
-`~/.cclark/seen_events.json` — JSON file mapping `{"events": [...], "messages": [...]}` used to survive process restarts. Loaded at module import time (`_load_seen_state()`). Updated on every new event/message ID (`_save_seen_state()`).
+`~/.unified-icc/seen_events.json` — JSON file mapping `{"events": [...], "messages": [...]}` used to survive process restarts. Loaded at module import time (`_load_seen_state()`). Updated on every new event/message ID (`_save_seen_state()`).
 
 ---
 

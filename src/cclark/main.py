@@ -1,7 +1,6 @@
 """cclark CLI entry point — run the Feishu bot via WebSocket long connection.
 
 Supports multi-app mode: one WS connection + adapter per app in config.yaml.
-In single-app mode (backward compat): behaves exactly as before.
 """
 
 from __future__ import annotations
@@ -15,12 +14,12 @@ from typing import Any
 
 import uvicorn
 from unified_icc.adapter import CardPayload
-from unified_icc import UnifiedICC
 
 from cclark.adapter import FeishuAdapter
 from cclark.config import AppConfig, config
 from cclark.feishu_client import FeishuClient
 from cclark.handlers.message import handle_message, set_handlers
+from cclark.icc_ws_gateway import ICCWebSocketGateway
 from cclark.webhook import app as health_app
 from cclark.ws_client import (
     FeishuWSClient,
@@ -85,7 +84,7 @@ def _should_auto_dismiss_terminal_panel(body: str) -> bool:
     return "Esc to cancel" in body or "Esc cancel" in body
 
 
-async def _auto_dismiss_terminal_panel(gateway: UnifiedICC, window_id: str, body: str) -> None:
+async def _auto_dismiss_terminal_panel(gateway: Any, window_id: str, body: str) -> None:
     """Dismiss a non-actionable terminal modal by sending Escape key(s)."""
     await gateway.send_key(window_id, "Escape")
     if "Esc cancel" in body and "Esc to cancel" not in body:
@@ -200,7 +199,7 @@ async def _dispatch_channel_messages(
     channel_id: str,
     messages: list[Any],
     _session_id: str,
-    _gateway: UnifiedICC,
+    _gateway: Any,
 ) -> None:
     """Route agent messages to one Feishu channel, splitting and streaming by content type."""
     adapter = get_adapter_for_channel(channel_id)
@@ -227,7 +226,7 @@ async def _dispatch_channel_messages(
         )
 
 
-async def _register_callbacks(gateway: UnifiedICC) -> None:  # noqa: C901,PLR0915
+async def _register_callbacks(gateway: Any) -> None:  # noqa: C901,PLR0915
     """Register gateway event callbacks to forward agent output to Feishu."""
 
     async def on_message(event: Any) -> None:  # noqa: C901
@@ -411,9 +410,12 @@ async def _main() -> None:  # noqa: C901
     """Start the cclark bot (WebSocket mode, supports multi-app)."""
     global _ws_clients
 
-    gateway = UnifiedICC()
+    gateway = ICCWebSocketGateway(
+        config.unified_icc_ws_url,
+        api_key=config.unified_icc_api_key,
+    )
     await gateway.start()
-    logger.info("Gateway started")
+    logger.info("UnifiedICC WebSocket gateway proxy started")
 
     await _register_callbacks(gateway)
 

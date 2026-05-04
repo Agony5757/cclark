@@ -4,7 +4,7 @@
 配置来源
 -------------
 
-cclark 首选从 ``~/.cclark/config.yaml`` 加载配置；只有当该文件不存在时，才使用环境变量作为单应用开发回退。
+cclark 首选从 ``~/.unified-icc/config.yaml`` 加载配置；只有当该文件不存在时，才使用环境变量作为单应用开发回退。
 
 .. code-block:: yaml
 
@@ -46,8 +46,8 @@ FeishuConfig 单例
 ~~~~~~~~~~~~
 
 1. ``FeishuConfig.__init__`` 在导入时运行
-2. 创建 ``~/.cclark/`` 目录（如不存在）
-3. 如果 ``~/.cclark/config.yaml`` 存在，则加载其中的 ``apps`` 列表
+2. 创建 ``~/.unified-icc/`` 目录（如不存在）
+3. 如果 ``~/.unified-icc/config.yaml`` 存在，则加载其中的 ``apps`` 列表
 4. 如果配置文件不存在，则读取环境变量 ``FEISHU_APP_ID`` / ``FEISHU_APP_SECRET`` / ``ALLOWED_USERS``
 5. 可选字段使用默认值
 
@@ -71,7 +71,7 @@ cclark 使用与 unified-icc 相同的平台无关频道 ID 格式：
 
 .. code-block:: toml
 
-   # ~/.cclark/toolbar.toml
+   # ~/.unified-icc/toolbar.toml
    [providers.claude]
    style = "emoji_text"
    buttons = [

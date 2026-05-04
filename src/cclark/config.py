@@ -1,6 +1,6 @@
 """Feishu bot configuration — config.yaml first, falls back to .env.
 
-~/.cclark/config.yaml format (multi-app):
+~/.unified-icc/config.yaml format (multi-app):
   apps:
     - name: "default"
       app_id: "cli_xxx"
@@ -11,7 +11,7 @@
       health_port: 8080   # HTTP health-check port for load-balancer probes
 
 If config.yaml does not exist, falls back to FEISHU_APP_ID / FEISHU_APP_SECRET
-env vars for backward compatibility (single-app mode).
+env vars for single-app development mode.
 
 Key class: FeishuConfig (singleton at module level as `config`).
 """
@@ -26,6 +26,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 logger = structlog.get_logger()
+
+_CONFIG_DIR_ENV = "UNIFIED_ICC_DIR"
+_DEFAULT_CONFIG_DIR = Path.home() / ".unified-icc"
 
 
 @dataclass
@@ -45,16 +48,16 @@ class FeishuConfig:
     """Feishu bot configuration — supports multiple apps via config.yaml."""
 
     def __init__(self) -> None:
-        self.config_dir = Path.home() / ".cclark"
+        self.config_dir = self._resolve_config_dir()
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
-        # Always load .env for backward compat and local overrides
+        # Always load .env for local overrides
         for env_path in (Path(".env"), self.config_dir / ".env"):
             if env_path.is_file():
                 load_dotenv(env_path)
                 logger.debug("Loaded env from %s", env_path.resolve())
 
-        # Try config.yaml first, fall back to .env
+        # Try config.yaml first, then environment variables.
         yaml_path = self.config_dir / "config.yaml"
         self.apps: list[AppConfig] = []
         self._by_name: dict[str, AppConfig] = {}
@@ -66,7 +69,7 @@ class FeishuConfig:
 
         if not self.apps:
             raise ValueError(
-                "No Feishu app configured: create ~/.cclark/config.yaml or set "
+                "No Feishu app configured: create ~/.unified-icc/config.yaml or set "
                 "FEISHU_APP_ID + FEISHU_APP_SECRET in .env"
             )
 
@@ -79,12 +82,25 @@ class FeishuConfig:
 
     # ── YAML loading ─────────────────────────────────────────────────────────────
 
+    def _resolve_config_dir(self) -> Path:
+        """Return the primary configuration directory."""
+        raw = os.getenv(_CONFIG_DIR_ENV, "")
+        if raw:
+            return Path(raw).expanduser()
+
+        return _DEFAULT_CONFIG_DIR
+
     def _load_yaml(self, path: Path) -> None:
         """Parse config.yaml and populate self.apps with one AppConfig per entry."""
         import yaml  # type: ignore[import]
 
         with open(path) as f:
             raw = yaml.safe_load(f)
+
+        self.unified_icc_ws_url = str(
+            raw.get("unified_icc_ws_url", "ws://127.0.0.1:8900/api/v1/ws")
+        )
+        self.unified_icc_api_key = str(raw.get("unified_icc_api_key", ""))
 
         apps_list = raw.get("apps", [])
         if not isinstance(apps_list, list):
@@ -116,7 +132,7 @@ class FeishuConfig:
 
         logger.info("Loaded %d app(s) from %s", len(self.apps), path)
 
-    # ── Env-var fallback (single-app, backward compat) ─────────────────────────
+    # ── Env-var fallback (single-app development) ──────────────────────────────
 
     def _load_from_env(self) -> None:
         """Read FEISHU_APP_ID / FEISHU_APP_SECRET env vars and create a single default app."""
@@ -124,6 +140,15 @@ class FeishuConfig:
         app_secret = os.getenv("FEISHU_APP_SECRET", "").strip()
         if not app_id or not app_secret:
             return  # Will raise "no apps" above
+
+        self.unified_icc_ws_url = os.getenv(
+            "CCLARK_UNIFIED_ICC_WS_URL",
+            os.getenv("ICC_WS_URL", "ws://127.0.0.1:8900/api/v1/ws"),
+        )
+        self.unified_icc_api_key = os.getenv(
+            "CCLARK_UNIFIED_ICC_API_KEY",
+            os.getenv("ICC_API_KEY", ""),
+        )
 
         allowed_raw = os.getenv("ALLOWED_USERS", "").strip().lower()
         if allowed_raw in ("", "all"):
@@ -141,7 +166,7 @@ class FeishuConfig:
             health_port=int(os.getenv("CCLARK_HEALTH_PORT", "8080")),
         ))
         self._by_name["default"] = self.apps[0]
-        logger.info("Loaded single-app config from environment (backward compat)")
+        logger.info("Loaded single-app config from environment")
 
     # ── App lookup ────────────────────────────────────────────────────────────
 
@@ -155,7 +180,7 @@ class FeishuConfig:
     def is_multi_app(self) -> bool:
         return len(self.apps) > 1
 
-    # ── Convenience shortcuts (single-app compatibility) ──────────────────────
+    # ── Convenience shortcuts ─────────────────────────────────────────────────
 
     @property
     def feishu_app_id(self) -> str:

@@ -13,7 +13,6 @@ import asyncio
 import json
 import random
 import structlog
-from pathlib import Path
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
@@ -260,7 +259,7 @@ class WSClientConfig:
 _message_handler: Any | None = None
 
 # Deduplication state — persisted to disk so events are not replayed after restart
-_SEEN_STATE_PATH = Path.home() / ".cclark" / "seen_events.json"
+_SEEN_STATE_PATH = config.config_dir / "seen_events.json"
 _seen_events: set[str] = set()
 _seen_messages: set[str] = set()
 

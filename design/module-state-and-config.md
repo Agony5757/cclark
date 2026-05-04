@@ -8,7 +8,7 @@
 
 This group of four modules provides the context and persistence infrastructure that all other modules depend on:
 
-- **`config.py`** — reads `~/.cclark/config.yaml` (or `.env` fallback), exposes per-app and global config values as a singleton `config` object.
+- **`config.py`** — reads `~/.unified-icc/config.yaml` (or `.env` fallback), exposes per-app and global config values as a singleton `config` object.
 - **`state.py`** — in-memory per-channel state: streaming card IDs, turn indices, thinking card state, and toolbar state.
 - **`user_preferences.py`** — per-user MRU directories and window read offsets, backed by the unified-icc window state store.
 - **`event_parsers.py`** — translates the raw JSON payload from the WebSocket client into a typed `FeishuMessageEvent` dataclass.
@@ -69,9 +69,9 @@ gateway events (on_message, on_status)
 
 #### Loading order
 
-1. `load_dotenv()` for `.env` and `~/.cclark/.env` (backward compat and local overrides)
-2. If `~/.cclark/config.yaml` exists → `_load_yaml()` (multi-app)
-3. Otherwise → `_load_from_env()` (single-app backward compat)
+1. `load_dotenv()` for `.env` and `~/.unified-icc/.env`(local overrides)
+2. If `~/.unified-icc/config.yaml` exists → `_load_yaml()` (multi-app)
+3. Otherwise → `_load_from_env()`(single-app env fallback)
 4. If no apps loaded → raise `ValueError`
 
 #### YAML format
@@ -291,12 +291,12 @@ User turn 2:
 
 | Data | Where | Written by |
 |---|---|---|
-| Channel ↔ window bindings | `~/.cclark/state.json` | `unified_icc.state_persistence` |
-| Window metadata (cwd, provider, etc.) | `~/.cclark/window_state_store.json` | `window_store._schedule_save()` |
-| Session map (window → session_id) | `~/.cclark/session_map.json` | Claude Code hooks |
+| Channel ↔ window bindings | `~/.unified-icc/state.json` | `unified_icc.state_persistence` |
+| Window metadata (cwd, provider, etc.) | `~/.unified-icc/window_state_store.json` | `window_store._schedule_save()` |
+| Session map (window → session_id) | `~/.unified-icc/session_map.json` | Claude Code hooks |
 | User preferences (MRU, offsets) | Bundled in `window_state_store.json` | `window_store._schedule_save()` |
-| App config | `~/.cclark/config.yaml` or `~/.cclark/.env` | Manual (operator) |
-| Seen events/messages (dedup) | `~/.cclark/seen_events.json` | `ws_client._save_seen_state()` |
+| App config | `~/.unified-icc/config.yaml` or `~/.unified-icc/.env` | Manual (operator) |
+| Seen events/messages (dedup) | `~/.unified-icc/seen_events.json` | `ws_client._save_seen_state()` |
 
 ### 5.2 What is ephemeral (in-memory only)
 
@@ -311,7 +311,7 @@ User turn 2:
 
 | Situation | Handling |
 |---|---|
-| `~/.cclark/config.yaml` missing and env vars absent | `ValueError` at import time — process fails fast |
+| `~/.unified-icc/config.yaml` missing and env vars absent | `ValueError` at import time — process fails fast |
 | YAML file has malformed `apps` list | Log warning, skip bad entries, require at least one valid app |
 | `allowed_users` contains empty string | Treated as `"all"` (converted to `None`) |
 | Invalid `channel_id` in `split_channel_id` | `ValueError` (should not occur in normal operation) |
@@ -341,7 +341,7 @@ In multi-app mode, the channel ID string includes the app name (`feishu:admin:oc
 
 ### 7.5 User preferences co-located with window state
 
-`UserPreferences` is persisted via `WindowStateStore` rather than as a separate file. Both structures share the same `~/.cclark/window_state_store.json` file, which reduces the number of files to manage and ensures atomic saves cover all per-user and per-window state together.
+`UserPreferences` is persisted via `WindowStateStore` rather than as a separate file. Both structures share the same `~/.unified-icc/window_state_store.json` file, which reduces the number of files to manage and ensures atomic saves cover all per-user and per-window state together.
 
 ### 7.6 Event parsing returns None for non-text
 

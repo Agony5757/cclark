@@ -43,7 +43,7 @@ gateway = UnifiedCC(
     config=GatewayConfig(
         tmux_session="cclark",
         default_provider="claude",
-        config_dir="~/.cclark",
+        config_dir="~/.unified-icc",
         poll_interval=1.0,
     )
 )
@@ -133,7 +133,7 @@ Each event is dispatched to all registered callbacks concurrently.
 Reuses ccgram's debounced atomic JSON persistence:
 
 ```
-~/.cclark/
+~/.unified-icc/
 ├── state.json           # Channel bindings + window states + display names
 ├── session_map.json     # Hook-generated window_id→session mapping
 ├── events.jsonl         # Append-only hook event log

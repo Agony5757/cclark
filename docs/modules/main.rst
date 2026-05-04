@@ -19,7 +19,7 @@ main — CLI 入口点
 启动序列
 ------------
 
-1. 加载 ``~/.cclark/config.yaml`` 或环境变量回退配置。
+1. 加载 ``~/.unified-icc/config.yaml`` 或环境变量回退配置。
 2. 为默认 app 创建 ``FeishuClient`` 和 ``FeishuAdapter``。
 3. 启动 ``UnifiedICC``，连接 tmux、启动 session monitor、加载持久化状态。
 4. 注册 gateway 回调，把 ``AgentMessageEvent`` / ``StatusEvent`` 转换为飞书文本或卡片。

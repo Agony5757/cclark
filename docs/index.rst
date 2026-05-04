@@ -55,8 +55,8 @@ cclark 文档
 
 .. code-block:: bash
 
-   mkdir -p ~/.cclark
-   cp config.yaml.example ~/.cclark/config.yaml
+   mkdir -p ~/.unified-icc
+   cp config.yaml.example ~/.unified-icc/config.yaml
    # 填入 app_id / app_secret
    cclark
 
