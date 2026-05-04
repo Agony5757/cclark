@@ -509,17 +509,13 @@ async def _create_gateway_window(
     provider: str,
     approval_mode: str,
 ) -> Any:
-    """Create a window through either the WS proxy or legacy embedded gateway."""
+    """Create a window through the WS proxy gateway."""
     from cclark.handlers.message import _gateway
 
-    if hasattr(_gateway, "create_channel_window"):
-        return await _gateway.create_channel_window(
-            channel_id,
-            path,
-            provider=provider,
-            mode=approval_mode,
-        )
-    return await _gateway.create_window(
+    if _gateway is None:
+        raise RuntimeError("Gateway not initialized")
+    return await _gateway.create_channel_window(
+        channel_id,
         path,
         provider=provider,
         mode=approval_mode,
